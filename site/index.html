@@ -1,0 +1,403 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Lefa — Open computer use for Linux</title>
+<meta name="description" content="Lefa gives AI agents eyes and hands on any Linux machine — screenshots, accessibility trees, and native input, exposed over MCP." />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
+<style>
+  :root {
+    --bg: #05060a;
+    --text: #e7e9ee;
+    --muted: #9aa3b2;
+    --line: rgba(255, 255, 255, 0.08);
+    --glass: rgba(255, 255, 255, 0.04);
+    --violet: #8b5cf6;
+    --cyan: #22d3ee;
+    --pink: #f472b6;
+    --green: #34d399;
+    --ease: cubic-bezier(0.22, 1, 0.36, 1);
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  html, body { height: 100%; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: "Inter", system-ui, -apple-system, sans-serif;
+    height: 100dvh;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  ::selection { background: rgba(139, 92, 246, 0.4); }
+
+  /* ---------- background layers ---------- */
+  .bg { position: fixed; inset: 0; z-index: 0; pointer-events: none; }
+
+  .bg .grid {
+    position: absolute; inset: 0;
+    background-image:
+      linear-gradient(rgba(255,255,255,0.035) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(255,255,255,0.035) 1px, transparent 1px);
+    background-size: 56px 56px;
+    mask-image: radial-gradient(ellipse 90% 80% at 50% 40%, black 30%, transparent 75%);
+    -webkit-mask-image: radial-gradient(ellipse 90% 80% at 50% 40%, black 30%, transparent 75%);
+  }
+
+  .orb { position: absolute; border-radius: 50%; filter: blur(110px); opacity: 0.55; will-change: transform; }
+  .orb.v { width: 44vw; height: 44vw; background: radial-gradient(circle, rgba(139,92,246,0.55), transparent 65%); top: -18vw; left: -10vw; animation: drift1 22s var(--ease) infinite alternate; }
+  .orb.c { width: 38vw; height: 38vw; background: radial-gradient(circle, rgba(34,211,238,0.4), transparent 65%); bottom: -14vw; right: -8vw; animation: drift2 26s var(--ease) infinite alternate; }
+  .orb.p { width: 26vw; height: 26vw; background: radial-gradient(circle, rgba(244,114,182,0.3), transparent 65%); top: 40%; left: 46%; animation: drift3 30s var(--ease) infinite alternate; }
+
+  @keyframes drift1 { to { transform: translate(9vw, 7vh) scale(1.15); } }
+  @keyframes drift2 { to { transform: translate(-8vw, -6vh) scale(1.1); } }
+  @keyframes drift3 { to { transform: translate(-6vw, 8vh) scale(0.9); } }
+
+  .noise {
+    position: absolute; inset: 0; opacity: 0.5; mix-blend-mode: overlay;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.16'/%3E%3C/svg%3E");
+  }
+
+  .cursor-glow {
+    position: absolute; width: 560px; height: 560px; border-radius: 50%;
+    background: radial-gradient(circle, rgba(139,92,246,0.14), transparent 60%);
+    transform: translate(-50%, -50%); left: 50%; top: 40%;
+    transition: opacity 0.4s;
+  }
+
+  /* ---------- nav ---------- */
+  nav {
+    position: relative; z-index: 2;
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 20px clamp(24px, 5vw, 64px);
+    animation: fadeDown 0.9s var(--ease) both;
+  }
+
+  .brand { display: flex; align-items: center; gap: 11px; text-decoration: none; color: var(--text); }
+  .brand .word { font-size: 19px; font-weight: 700; letter-spacing: -0.02em; }
+
+  .logo {
+    width: 32px; height: 32px; border-radius: 9px; position: relative; flex: none;
+    background: linear-gradient(135deg, var(--violet), var(--cyan));
+    box-shadow: 0 0 22px rgba(139,92,246,0.55), inset 0 0 0 1px rgba(255,255,255,0.25);
+  }
+  .logo svg { position: absolute; inset: 0; margin: auto; }
+
+  .nav-right { display: flex; align-items: center; gap: 26px; }
+  .nav-link { color: var(--muted); text-decoration: none; font-size: 14px; font-weight: 500; transition: color 0.2s; }
+  .nav-link:hover { color: var(--text); }
+
+  .gh-btn {
+    display: inline-flex; align-items: center; gap: 8px;
+    padding: 8px 16px; border-radius: 999px; text-decoration: none;
+    font-size: 13.5px; font-weight: 600; color: var(--text);
+    background: var(--glass); border: 1px solid var(--line);
+    backdrop-filter: blur(12px);
+    transition: border-color 0.25s, background 0.25s, transform 0.25s;
+  }
+  .gh-btn:hover { border-color: rgba(255,255,255,0.25); background: rgba(255,255,255,0.08); transform: translateY(-1px); }
+
+  /* ---------- hero ---------- */
+  main {
+    position: relative; z-index: 1; flex: 1; min-height: 0;
+    display: grid; grid-template-columns: minmax(0, 1.05fr) minmax(0, 0.95fr);
+    align-items: center; gap: clamp(24px, 4vw, 72px);
+    padding: 0 clamp(24px, 5vw, 64px);
+    max-width: 1600px; margin: 0 auto; width: 100%;
+  }
+
+  .hero > * { animation: rise 1s var(--ease) both; }
+  .hero > *:nth-child(1) { animation-delay: 0.1s; }
+  .hero > *:nth-child(2) { animation-delay: 0.2s; }
+  .hero > *:nth-child(3) { animation-delay: 0.32s; }
+  .hero > *:nth-child(4) { animation-delay: 0.44s; }
+  .hero > *:nth-child(5) { animation-delay: 0.56s; }
+
+  .badge {
+    display: inline-flex; align-items: center; gap: 9px;
+    font-size: 12.5px; font-weight: 600; letter-spacing: 0.04em;
+    color: var(--muted); padding: 7px 14px; border-radius: 999px;
+    border: 1px solid var(--line); background: var(--glass); backdrop-filter: blur(12px);
+    margin-bottom: clamp(16px, 2.6vh, 28px);
+  }
+  .badge .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--green); box-shadow: 0 0 0 0 rgba(52,211,153,0.6); animation: pulse 2.2s infinite; }
+  @keyframes pulse { 70% { box-shadow: 0 0 0 9px rgba(52,211,153,0); } 100% { box-shadow: 0 0 0 0 rgba(52,211,153,0); } }
+
+  h1 {
+    font-size: clamp(40px, 4.8vw, 82px);
+    line-height: 1.04; font-weight: 800; letter-spacing: -0.035em;
+    margin-bottom: clamp(14px, 2.4vh, 24px);
+  }
+  .grad {
+    background: linear-gradient(90deg, var(--violet), var(--cyan), var(--pink), var(--violet));
+    background-size: 300% 100%;
+    -webkit-background-clip: text; background-clip: text; color: transparent;
+    animation: hue 9s linear infinite;
+  }
+  @keyframes hue { to { background-position: 300% 0; } }
+
+  .sub {
+    font-size: clamp(15px, 1.05vw, 20px); line-height: 1.65; color: var(--muted);
+    max-width: 54ch; margin-bottom: clamp(20px, 3.4vh, 34px);
+  }
+  .sub strong { color: var(--text); font-weight: 600; }
+
+  .cta-row { display: flex; align-items: center; gap: 14px; margin-bottom: clamp(20px, 3.6vh, 36px); flex-wrap: wrap; }
+
+  .btn-primary {
+    display: inline-flex; align-items: center; gap: 9px;
+    background: #fff; color: #0a0b10; text-decoration: none;
+    padding: 13px 26px; border-radius: 12px; font-weight: 700; font-size: 15px;
+    box-shadow: 0 0 0 0 rgba(255,255,255,0.2), 0 10px 34px rgba(139,92,246,0.35);
+    transition: transform 0.25s var(--ease), box-shadow 0.25s;
+  }
+  .btn-primary:hover { transform: translateY(-2px); box-shadow: 0 0 24px rgba(255,255,255,0.18), 0 16px 44px rgba(139,92,246,0.5); }
+  .btn-primary .arrow { transition: transform 0.25s var(--ease); }
+  .btn-primary:hover .arrow { transform: translateX(3px); }
+
+  .btn-ghost {
+    display: inline-flex; align-items: center; gap: 9px;
+    color: var(--text); text-decoration: none; font-weight: 600; font-size: 15px;
+    padding: 13px 24px; border-radius: 12px;
+    border: 1px solid var(--line); background: var(--glass); backdrop-filter: blur(12px);
+    transition: border-color 0.25s, background 0.25s, transform 0.25s;
+  }
+  .btn-ghost:hover { border-color: rgba(255,255,255,0.24); background: rgba(255,255,255,0.07); transform: translateY(-2px); }
+
+  .chips { display: flex; gap: 10px; flex-wrap: wrap; }
+  .chip {
+    font-family: "JetBrains Mono", monospace; font-size: 12px; color: var(--muted);
+    padding: 7px 13px; border-radius: 8px; border: 1px solid var(--line);
+    background: rgba(255,255,255,0.03); white-space: nowrap;
+    transition: color 0.25s, border-color 0.25s;
+  }
+  .chip:hover { color: var(--text); border-color: rgba(139,92,246,0.5); }
+  .chip b { color: var(--cyan); font-weight: 600; }
+
+  /* ---------- terminal ---------- */
+  .term-wrap { position: relative; animation: rise 1.1s var(--ease) 0.35s both; }
+
+  .term-halo {
+    position: absolute; inset: -22%;
+    background: radial-gradient(ellipse at 50% 50%, rgba(139,92,246,0.18), rgba(34,211,238,0.08) 45%, transparent 70%);
+    filter: blur(30px); z-index: -1;
+  }
+
+  .terminal {
+    border-radius: 16px; overflow: hidden;
+    border: 1px solid rgba(255,255,255,0.1);
+    background: rgba(10, 12, 19, 0.82);
+    backdrop-filter: blur(18px);
+    box-shadow: 0 30px 80px rgba(0,0,0,0.55), inset 0 1px 0 rgba(255,255,255,0.06);
+    animation: floaty 7s ease-in-out infinite;
+  }
+  @keyframes floaty { 50% { transform: translateY(-9px); } }
+
+  .term-bar {
+    display: flex; align-items: center; gap: 8px;
+    padding: 13px 16px; border-bottom: 1px solid rgba(255,255,255,0.07);
+    background: rgba(255,255,255,0.025);
+  }
+  .term-bar .b { width: 11px; height: 11px; border-radius: 50%; }
+  .term-bar .b1 { background: #ff5f57; } .term-bar .b2 { background: #febc2e; } .term-bar .b3 { background: #28c840; }
+  .term-title {
+    margin-left: 10px; font-family: "JetBrains Mono", monospace;
+    font-size: 12px; color: var(--muted); letter-spacing: 0.02em;
+  }
+  .term-live {
+    margin-left: auto; display: inline-flex; align-items: center; gap: 6px;
+    font-family: "JetBrains Mono", monospace; font-size: 10.5px; color: var(--green); letter-spacing: 0.1em;
+  }
+  .term-live .ld { width: 6px; height: 6px; border-radius: 50%; background: var(--green); animation: pulse 2.2s infinite; }
+
+  .term-body {
+    padding: clamp(20px, 1.6vw, 30px) clamp(22px, 1.8vw, 34px);
+    font-family: "JetBrains Mono", monospace;
+    font-size: clamp(11.5px, 0.72vw, 16px);
+    line-height: 1.95;
+    min-height: clamp(280px, 42vh, 560px);
+    white-space: pre-wrap; word-break: break-word;
+  }
+
+  .t-dim { color: #5b657a; } .t-green { color: var(--green); } .t-cyan { color: var(--cyan); }
+  .t-violet { color: #a78bfa; } .t-pink { color: var(--pink); } .t-yellow { color: #fbbf24; } .t-white { color: #dfe4ec; }
+
+  .caret {
+    display: inline-block; width: 8px; height: 15px; vertical-align: -2px;
+    background: var(--cyan); animation: blink 1s steps(1) infinite;
+  }
+  @keyframes blink { 50% { opacity: 0; } }
+
+  /* ---------- footer ---------- */
+  footer {
+    position: relative; z-index: 1;
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 18px clamp(24px, 5vw, 64px);
+    font-size: 13px; color: #8a93a5;
+    border-top: 1px solid rgba(255,255,255,0.08);
+    animation: fadeUp 1s var(--ease) 0.7s both;
+  }
+  footer .links { display: flex; gap: 22px; }
+  footer a { color: #8a93a5; text-decoration: none; transition: color 0.2s; }
+  footer a:hover { color: var(--text); }
+
+  @keyframes rise { from { opacity: 0; transform: translateY(26px); } to { opacity: 1; transform: none; } }
+  @keyframes fadeDown { from { opacity: 0; transform: translateY(-14px); } to { opacity: 1; transform: none; } }
+  @keyframes fadeUp { from { opacity: 0; } to { opacity: 1; } }
+
+  @media (max-width: 960px) {
+    main { grid-template-columns: 1fr; align-content: center; }
+    .term-wrap { display: none; }
+    h1 { font-size: clamp(36px, 9vw, 52px); }
+  }
+</style>
+</head>
+<body>
+
+<div class="bg">
+  <div class="orb v"></div>
+  <div class="orb c"></div>
+  <div class="orb p"></div>
+  <div class="grid"></div>
+  <div class="noise"></div>
+  <div class="cursor-glow" id="glow"></div>
+</div>
+
+<nav>
+  <a class="brand" href="/">
+    <span class="logo">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
+        <path d="M6 3.5 L18.5 12.5 L12.8 13.6 L15.6 19.8 L12.9 21 L10.2 14.7 L6 18.6 Z" fill="#fff"/>
+      </svg>
+    </span>
+    <span class="word">Lefa</span>
+  </a>
+  <div class="nav-right">
+    <a class="gh-btn" href="https://github.com/lefa-ai">
+      <svg width="15" height="15" viewBox="0 0 16 16" fill="currentColor"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27s1.36.09 2 .27c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8z"/></svg>
+      Star on GitHub
+    </a>
+  </div>
+</nav>
+
+<main>
+  <section class="hero">
+    <div class="badge"><span class="dot"></span> OPEN SOURCE &nbsp;·&nbsp; LINUX-FIRST &nbsp;·&nbsp; MCP-NATIVE</div>
+    <h1>Give your agents<br /><span class="grad">eyes and hands.</span></h1>
+    <p class="sub">
+      Lefa is <strong>open-source computer use</strong> for the machines agents actually run on.
+      Screenshots, accessibility trees, and native input on any Linux box —
+      exposed as clean <strong>MCP tools</strong> any model can drive.
+    </p>
+    <div class="cta-row">
+      <a class="btn-primary" href="https://github.com/lefa-ai">Get started <span class="arrow">→</span></a>
+      <a class="btn-ghost" href="https://bsky.app/profile/lefa.ai">Follow the build</a>
+    </div>
+    <div class="chips">
+      <span class="chip"><b>◈</b> AT-SPI perception</span>
+      <span class="chip"><b>▤</b> Wayland + X11</span>
+      <span class="chip"><b>⚙</b> Rust core</span>
+      <span class="chip"><b>◇</b> Runs in your cloud</span>
+    </div>
+  </section>
+
+  <section class="term-wrap">
+    <div class="term-halo"></div>
+    <div class="terminal">
+      <div class="term-bar">
+        <span class="b b1"></span><span class="b b2"></span><span class="b b3"></span>
+        <span class="term-title">agent@cloud — lefa mcp</span>
+        <span class="term-live"><span class="ld"></span>LIVE</span>
+      </div>
+      <div class="term-body" id="term"></div>
+    </div>
+  </section>
+</main>
+
+<footer>
+  <span>© 2026 Lefa — built in the open.</span>
+  <div class="links">
+    <a href="https://github.com/lefa-ai">GitHub</a>
+    <a href="https://bsky.app/profile/lefa.ai">Bluesky</a>
+    <a href="https://reddit.com/r/lefa">Reddit</a>
+    <a href="mailto:m@lefa.ai">Contact</a>
+  </div>
+</footer>
+
+<script>
+  // ---- terminal typing animation ----
+  const lines = [
+    [["t-dim", "$ "], ["t-white", "lefa mcp"]],
+    [["t-green", "✓ "], ["t-dim", "lefad connected · session "], ["t-cyan", "wayland"], ["t-dim", " · a11y tree ready"]],
+    [["", ""]],
+    [["t-violet", "→ "], ["t-white", "get_app_state"], ["t-dim", "("], ["t-yellow", "\"firefox\""], ["t-dim", ")"]],
+    [["t-dim", "  · 214 elements · focused: "], ["t-cyan", "search_input"], ["t-dim", " · shot 1280×720"]],
+    [["t-violet", "→ "], ["t-white", "type_text"], ["t-dim", "("], ["t-yellow", "\"lefa.ai\""], ["t-dim", ")"]],
+    [["t-violet", "→ "], ["t-white", "press_key"], ["t-dim", "("], ["t-yellow", "\"Enter\""], ["t-dim", ")"]],
+    [["t-violet", "→ "], ["t-white", "click"], ["t-dim", "(element="], ["t-pink", "42"], ["t-dim", ")  "], ["t-dim", "# “Get started”"]],
+    [["", ""]],
+    [["t-green", "✓ done"], ["t-dim", " · 4 actions · 1.8s · 0 retries"]],
+  ];
+
+  const term = document.getElementById("term");
+  const caret = document.createElement("span");
+  caret.className = "caret";
+
+  let li = 0, ci = 0, si = 0, spans = [];
+
+  function currentLineText(l) { return lines[l].map(p => p[1]).join(""); }
+
+  function step() {
+    if (li >= lines.length) {
+      term.appendChild(caret);
+      setTimeout(() => { term.innerHTML = ""; li = 0; ci = 0; si = 0; spans = []; step(); }, 3800);
+      return;
+    }
+    const segs = lines[li];
+    if (si === 0 && ci === 0) {
+      spans = segs.map(([cls]) => {
+        const s = document.createElement("span");
+        if (cls) s.className = cls;
+        term.appendChild(s);
+        return s;
+      });
+      caret.remove(); term.appendChild(caret);
+    }
+    const [, text] = segs[si];
+    if (ci < text.length) {
+      spans[si].textContent += text[ci++];
+      caret.remove(); term.appendChild(caret);
+      setTimeout(step, lines[li][0][0] === "t-dim" && si === 0 ? 26 : 14 + Math.random() * 26);
+    } else {
+      si++; ci = 0;
+      if (si >= segs.length) {
+        term.appendChild(document.createTextNode("\n"));
+        li++; si = 0;
+        const pause = currentLineText(li - 1).startsWith("✓") ? 500 : currentLineText(li - 1) === "" ? 60 : 260;
+        setTimeout(step, pause);
+      } else { step(); }
+    }
+  }
+  setTimeout(step, 1200);
+
+  // ---- cursor-follow glow ----
+  const glow = document.getElementById("glow");
+  let gx = innerWidth / 2, gy = innerHeight * 0.4, tx = gx, ty = gy;
+  addEventListener("mousemove", e => { tx = e.clientX; ty = e.clientY; });
+  (function loop() {
+    gx += (tx - gx) * 0.06; gy += (ty - gy) * 0.06;
+    glow.style.left = gx + "px"; glow.style.top = gy + "px";
+    requestAnimationFrame(loop);
+  })();
+</script>
+
+</body>
+</html>
