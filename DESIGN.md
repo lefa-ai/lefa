@@ -1,8 +1,7 @@
 # Lefa design system
 
 Dark-only, terminal-native, built on the shadcn token model with Tailwind palette values.
-Chosen 2026-07-06 in the design lab (`site/design/`) — the lab pages remain the living,
-clickable reference; this file is the source of truth for the decisions.
+Chosen 2026-07-06. This file is the source of truth for the design decisions.
 
 ## The system in one line
 
@@ -92,9 +91,8 @@ Lime is the personality bet: every dev tool is blue — lime-400 on near-black o
 
 ## Components
 
-Reference implementations live in `site/design/ds.css` and are demoed in
-`site/design/components.html` (buttons, badges, forms, switches, tabs, tables, alerts,
-dialog, skeleton, progress, tooltip, kbd, code block). Conventions:
+Conventions for the kit (buttons, badges, forms, switches, tabs, tables, alerts, dialog,
+skeleton, progress, tooltip, kbd, code block):
 
 - Button variants: primary / secondary / outline / ghost / destructive / link.
 - One primary button per view. Secondary for the alternative, ghost for the quiet stuff.
@@ -105,8 +103,9 @@ dialog, skeleton, progress, tooltip, kbd, code block). Conventions:
 
 - The mark: thin **pentagon around a dot** — `brand/lefa-mark-white.svg` (dark bg) and
   `brand/lefa-mark-black.svg` (light bg). Geometry is locked; scale, don't redraw.
-- The live cursor (see `site/cursor-lab.html`, "Classic"): instant white dot, thin pentagon
-  trailing at λ=6, spins 9s, glows, grows 1.35× on hover, shrinks 0.7× on click.
-- **Open decision**: the cursor's surround is currently `#4d9fff` (blue), chosen before the
-  lime accent. Consider re-tinting the cursor to lime-400 so pointer and UI accent are one
-  color — decide when applying this system to the landing page.
+- The live cursor: instant white dot, thin **lime-400** pentagon (stroke 1.8) trailing at
+  λ=6, spins 9s, breathes, lime glow; grows 1.35× on hover over interactive elements,
+  shrinks 0.7× on click. Fine pointers only; disabled under reduced motion; the native
+  cursor is never hidden before the custom one has a position.
+- The cursor surround was prototyped in blue (`#4d9fff`) and re-tinted to lime-400 when
+  the system was applied, so pointer and accent are one color.
