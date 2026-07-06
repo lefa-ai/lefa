@@ -1,0 +1,117 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Colors — Lefa Design System Lab</title>
+<meta name="robots" content="noindex" />
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 48 48'%3E%3Crect width='48' height='48' rx='11' fill='%2318181b'/%3E%3Cg fill='none' stroke='%23fff' stroke-width='3' stroke-linejoin='round'%3E%3Cpolygon points='24,6 41.119,18.438 34.58,38.562 13.42,38.562 6.881,18.438'/%3E%3C/g%3E%3Ccircle cx='24' cy='24' r='4.5' fill='%23fff'/%3E%3C/svg%3E" />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700;800&family=Geist+Mono:wght@400;500;600&family=Inter:wght@400;500;600;700;800&family=Manrope:wght@400;500;600;700;800&family=Sora:wght@400;500;600;700&family=Space+Grotesk:wght@400;500;600;700&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=DM+Sans:wght@400;500;600;700&family=Outfit:wght@400;500;600;700&family=IBM+Plex+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&family=Fira+Code:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500;600&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet" />
+<link rel="stylesheet" href="ds.css" />
+<style>
+  .scale { display: flex; gap: 4px; }
+  .scale .cell { flex: 1; }
+  .scale .cell i { display: block; height: 44px; border-radius: 6px; }
+  .scale .cell small { display: block; text-align: center; margin-top: 5px; font-family: var(--font-mono); font-size: 9.5px; color: var(--muted-foreground); }
+  .scale .cell.on i { outline: 2px solid var(--ring); outline-offset: 2px; }
+</style>
+</head>
+<body>
+
+<div class="wrap">
+  <div class="page-h">
+    <h1>Colors</h1>
+    <p>Accent drives buttons, focus rings, badges and links. The neutral family is everything else —
+       backgrounds, borders, text. Both are straight Tailwind scales.</p>
+  </div>
+
+  <section class="block">
+    <h2>Accent — the three candidates (+ current brand for reference)</h2>
+    <div class="opts wide" id="accent-opts"></div>
+  </section>
+
+  <section class="block">
+    <h2>Primary shade — how hot the accent runs</h2>
+    <div class="opts" id="shade-opts" style="grid-template-columns: repeat(auto-fill, minmax(120px, 1fr))"></div>
+  </section>
+
+  <section class="block">
+    <h2>Neutral family — the greys everything sits on</h2>
+    <div class="opts wide" id="neutral-opts"></div>
+  </section>
+
+  <section class="block">
+    <h2>Full scales — active accent + neutral</h2>
+    <div class="card"><div class="card-b">
+      <div class="label mono" id="accent-scale-label"></div>
+      <div class="scale" id="accent-scale"></div>
+      <hr class="separator" />
+      <div class="label mono" id="neutral-scale-label"></div>
+      <div class="scale" id="neutral-scale"></div>
+    </div></div>
+  </section>
+
+  <section class="block">
+    <h2>Live preview</h2>
+    <div class="preview" id="color-preview"></div>
+  </section>
+</div>
+
+<script src="ds.js"></script>
+<script>
+"use strict";
+dsNav("colors.html");
+
+const accentOpts = document.getElementById("accent-opts");
+const shadeOpts = document.getElementById("shade-opts");
+const neutralOpts = document.getElementById("neutral-opts");
+
+function swatchRow(palette, shades) {
+  return shades.map((s) => '<i style="background:' + palette[s] + '"></i>').join("");
+}
+
+function renderPickers() {
+  optionGrid(accentOpts, ACCENTS.map((a) => ({
+    key: a.key,
+    label: a.label,
+    note: a.note,
+    swatch: swatchRow(TW[a.key], [300, 400, 500, 600, 700]),
+  })), (k) => k === DS.accent, (k) => saveDS({ accent: k }), true);
+
+  optionGrid(shadeOpts, SHADES.map((s) => ({
+    key: s,
+    label: DS.accent + "-" + s,
+    swatch: '<i style="background:' + TW[DS.accent][s] + '"></i>',
+  })), (k) => k === DS.shade, (k) => saveDS({ shade: k }));
+
+  optionGrid(neutralOpts, NEUTRALS.map((n) => ({
+    key: n,
+    label: n,
+    note: n === "slate" ? "cool blue-grey" : n === "stone" ? "warm grey" : n === "gray" ? "classic cool" : n === "zinc" ? "shadcn default" : "pure grey",
+    swatch: swatchRow(TW[n], [400, 600, 800, 900, 950]),
+  })), (k) => k === DS.neutral, (k) => saveDS({ neutral: k }), true);
+}
+
+function renderScales() {
+  const shades = [50, 100, 200, 300, 400, 500, 600, 700, 800, 900, 950];
+  document.getElementById("accent-scale-label").textContent = DS.accent + " (primary: " + DS.shade + ")";
+  document.getElementById("accent-scale").innerHTML = shades.map((s) =>
+    '<span class="cell' + (String(s) === DS.shade ? " on" : "") + '"><i style="background:' + TW[DS.accent][s] + '"></i><small>' + s + "</small></span>").join("");
+  document.getElementById("neutral-scale-label").textContent = DS.neutral;
+  document.getElementById("neutral-scale").innerHTML = shades.map((s) =>
+    '<span class="cell"><i style="background:' + TW[DS.neutral][s] + '"></i><small>' + s + "</small></span>").join("");
+}
+
+function renderAll() {
+  renderPickers();
+  renderScales();
+  document.getElementById("color-preview").innerHTML = previewStrip();
+}
+document.addEventListener("ds-change", renderAll);
+renderAll();
+</script>
+
+</body>
+</html>
