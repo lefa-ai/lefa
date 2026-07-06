@@ -1,0 +1,156 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Components — Lefa Design System Lab</title>
+<meta name="robots" content="noindex" />
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 48 48'%3E%3Crect width='48' height='48' rx='11' fill='%2318181b'/%3E%3Cg fill='none' stroke='%23fff' stroke-width='3' stroke-linejoin='round'%3E%3Cpolygon points='24,6 41.119,18.438 34.58,38.562 13.42,38.562 6.881,18.438'/%3E%3C/g%3E%3Ccircle cx='24' cy='24' r='4.5' fill='%23fff'/%3E%3C/svg%3E" />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700;800&family=Geist+Mono:wght@400;500;600&family=Inter:wght@400;500;600;700;800&family=Manrope:wght@400;500;600;700;800&family=Sora:wght@400;500;600;700&family=Space+Grotesk:wght@400;500;600;700&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=DM+Sans:wght@400;500;600;700&family=Outfit:wght@400;500;600;700&family=IBM+Plex+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&family=Fira+Code:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500;600&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet" />
+<link rel="stylesheet" href="ds.css" />
+<style>
+  .two-col { display: grid; grid-template-columns: 1fr 1fr; gap: var(--gap); align-items: start; }
+  @media (max-width: 860px) { .two-col { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+
+<div class="wrap">
+  <div class="page-h">
+    <h1>Components</h1>
+    <p>The whole kit rendered with your current tokens. Change anything on the other pages and
+       come back — everything here follows.</p>
+  </div>
+
+  <section class="block">
+    <h2>Buttons</h2>
+    <div class="card"><div class="card-b">
+      <div class="row"><button class="btn btn-primary">Primary</button><button class="btn btn-secondary">Secondary</button><button class="btn btn-outline">Outline</button><button class="btn btn-ghost">Ghost</button><button class="btn btn-destructive">Destructive</button><button class="btn btn-link">Link</button></div>
+      <div class="row" style="margin-top:var(--gap)"><button class="btn btn-primary btn-sm">Small</button><button class="btn btn-primary">Default</button><button class="btn btn-primary btn-lg">Large</button><button class="btn btn-primary" disabled>Disabled</button><button class="btn btn-outline btn-icon tooltip" data-tip="Settings">⚙</button><button class="btn btn-primary">Deploy <kbd class="kbd" style="border-color:transparent;background:transparent;color:inherit;opacity:.75">⏎</kbd></button></div>
+    </div></div>
+  </section>
+
+  <section class="block">
+    <h2>Badges + avatars</h2>
+    <div class="card"><div class="card-b row">
+      <span class="badge badge-primary">Running</span>
+      <span class="badge badge-secondary">Queued</span>
+      <span class="badge badge-outline">v0.1.0</span>
+      <span class="badge badge-soft">wayland</span>
+      <span class="badge badge-destructive">Failed</span>
+      <span class="avatar">MH</span>
+      <span class="avatar" style="background:var(--secondary);color:var(--muted-foreground)">LF</span>
+      <kbd class="kbd">⌘</kbd><kbd class="kbd">K</kbd>
+    </div></div>
+  </section>
+
+  <section class="block">
+    <h2>Forms</h2>
+    <div class="two-col">
+      <div class="card">
+        <div class="card-h"><h3>Join the waitlist</h3><p class="muted">One email when it ships. No spam.</p></div>
+        <div class="card-b">
+          <label class="label" for="f-email">Email</label>
+          <input class="input" id="f-email" placeholder="you@company.com" />
+          <label class="label" style="margin-top:var(--gap)" for="f-distro">Distro</label>
+          <select class="select" id="f-distro"><option>Arch</option><option>Ubuntu</option><option>Fedora</option><option>NixOS</option></select>
+          <label class="label" style="margin-top:var(--gap)" for="f-notes">What will your agents do?</label>
+          <textarea class="input" id="f-notes" rows="3" placeholder="Click through legacy dashboards, run e2e flows…"></textarea>
+          <div class="row" style="margin-top:var(--gap)">
+            <label class="checkbox"><input type="checkbox" checked><i></i><span>Send me the changelog</span></label>
+          </div>
+        </div>
+        <div class="card-f"><button class="btn btn-primary" style="width:100%">Join waitlist →</button></div>
+      </div>
+      <div class="card">
+        <div class="card-h"><h3>Agent settings</h3><p class="muted">Per-machine capabilities.</p></div>
+        <div class="card-b">
+          <div class="row" style="justify-content:space-between"><label class="switch"><input type="checkbox" checked><i></i><span>Screenshots</span></label><span class="badge badge-soft">perception</span></div>
+          <hr class="separator" />
+          <div class="row" style="justify-content:space-between"><label class="switch"><input type="checkbox" checked><i></i><span>Accessibility tree</span></label><span class="badge badge-soft">perception</span></div>
+          <hr class="separator" />
+          <div class="row" style="justify-content:space-between"><label class="switch"><input type="checkbox"><i></i><span>Native input</span></label><span class="badge badge-outline">hands</span></div>
+          <hr class="separator" />
+          <label class="label">Session capture quality</label>
+          <div class="progress" style="margin-top:6px"><i style="width:64%"></i></div>
+          <p class="muted" style="margin-top:8px;font-size:calc(var(--fs) - 2px)">1280×720 · 64%</p>
+        </div>
+        <div class="card-f"><button class="btn btn-outline">Reset</button><button class="btn btn-primary">Save</button></div>
+      </div>
+    </div>
+  </section>
+
+  <section class="block">
+    <h2>Alerts</h2>
+    <div class="alert"><b>lefad connected.</b><span class="muted"> Session wayland · a11y tree ready · 214 elements.</span></div>
+    <div class="alert alert-primary" style="margin-top:10px"><b>Update available.</b><span class="muted"> lefa 0.2.0 adds multi-display capture.</span></div>
+    <div class="alert alert-destructive" style="margin-top:10px"><b>Session lost.</b> The agent's connection to staging-vm timed out after 30s.</div>
+  </section>
+
+  <section class="block">
+    <h2>Tabs + table</h2>
+    <div class="card"><div class="card-b">
+      <div class="tabs" id="demo-tabs">
+        <button class="tab on">Agents</button><button class="tab">Sessions</button><button class="tab">Logs</button>
+      </div>
+      <table class="table" style="margin-top:var(--gap)">
+        <thead><tr><th>Machine</th><th>Session</th><th>Uptime</th><th>Status</th><th style="text-align:right"></th></tr></thead>
+        <tbody>
+          <tr><td class="mono">dev-box-01</td><td>wayland</td><td class="muted">3d 4h</td><td><span class="badge badge-soft">running</span></td><td style="text-align:right"><button class="btn btn-ghost btn-sm">…</button></td></tr>
+          <tr><td class="mono">ci-runner-3</td><td>x11</td><td class="muted">14h</td><td><span class="badge badge-secondary">idle</span></td><td style="text-align:right"><button class="btn btn-ghost btn-sm">…</button></td></tr>
+          <tr><td class="mono">staging-vm</td><td>wayland</td><td class="muted">—</td><td><span class="badge badge-destructive">error</span></td><td style="text-align:right"><button class="btn btn-ghost btn-sm">…</button></td></tr>
+        </tbody>
+      </table>
+    </div></div>
+  </section>
+
+  <section class="block">
+    <h2>Dialog + skeleton + code</h2>
+    <div class="two-col">
+      <div class="card"><div class="card-b">
+        <button class="btn btn-primary" id="open-dialog">Open dialog</button>
+        <hr class="separator" />
+        <div class="row"><span class="skeleton" style="width:34px;height:34px;border-radius:999px"></span>
+          <div style="flex:1"><div class="skeleton" style="height:12px;width:60%;margin-bottom:8px"></div><div class="skeleton" style="height:12px;width:85%"></div></div></div>
+      </div></div>
+      <div class="codeblock"><span class="c2">$</span> lefa mcp --machine dev-box-01
+<span class="c1">✓</span> lefad connected · session wayland
+<span class="c2">→</span> get_app_state(<span class="c1">"firefox"</span>)
+<span class="c2">→</span> click(element=<span class="c1">42</span>)  <span class="c2"># "Join waitlist"</span>
+<span class="c1">✓</span> done · 4 actions · 1.8s · 0 retries</div>
+    </div>
+  </section>
+</div>
+
+<div class="dialog-backdrop" id="dialog-backdrop">
+  <div class="dialog">
+    <h3>Revoke agent access?</h3>
+    <p>The agent on <span class="mono">dev-box-01</span> will lose eyes and hands immediately.
+       Sessions in flight are cancelled.</p>
+    <div class="row"><button class="btn btn-ghost" id="dialog-cancel">Cancel</button><button class="btn btn-destructive" id="dialog-confirm">Revoke access</button></div>
+  </div>
+</div>
+
+<script src="ds.js"></script>
+<script>
+"use strict";
+dsNav("components.html");
+
+document.querySelectorAll("#demo-tabs .tab").forEach((t) => {
+  t.addEventListener("click", () => {
+    document.querySelectorAll("#demo-tabs .tab").forEach((x) => x.classList.remove("on"));
+    t.classList.add("on");
+  });
+});
+
+const backdrop = document.getElementById("dialog-backdrop");
+document.getElementById("open-dialog").addEventListener("click", () => backdrop.classList.add("open"));
+document.getElementById("dialog-cancel").addEventListener("click", () => backdrop.classList.remove("open"));
+document.getElementById("dialog-confirm").addEventListener("click", () => backdrop.classList.remove("open"));
+backdrop.addEventListener("click", (e) => { if (e.target === backdrop) backdrop.classList.remove("open"); });
+</script>
+
+</body>
+</html>
