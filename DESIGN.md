@@ -101,8 +101,10 @@ skeleton, progress, tooltip, kbd, code block):
 
 ## Brand mark & cursor
 
-- The mark: thin **pentagon around a dot** — `brand/lefa-mark-white.svg` (dark bg) and
-  `brand/lefa-mark-black.svg` (light bg). Geometry is locked; scale, don't redraw.
+- The mark: thin **pentagon around a dot**, sharp (miter) corners — `brand/lefa-mark-white.svg`
+  (dark bg), `brand/lefa-mark-black.svg` (light bg), and `brand/lefa-mark-lime.svg`
+  (two-tone: lime pentagon, white dot — the nav/avatar mark, dark bg only).
+  Geometry is locked; scale, don't redraw.
 - The live cursor: instant white dot, thin **lime-400** pentagon (stroke 1.8) trailing at
   λ=6, spins 9s, breathes, lime glow; grows 1.35× on hover over interactive elements,
   shrinks 0.7× on click. Fine pointers only; disabled under reduced motion; the native
