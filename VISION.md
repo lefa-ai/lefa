@@ -15,6 +15,24 @@ Mac-only. That leaves out the machines where most serious agent work will actual
 
 Lefa exists to fill that gap: **open computer use for the platforms agents will live on.**
 
+## Building a business
+
+This is not a side project or a demo — the goal is a **real company** built on top of
+open computer use. Agents that can operate Linux desktops are infrastructure: every
+company shipping agentic software will need eyes and hands on a machine. Lefa can be
+the layer they build on.
+
+The business and the depth are the same bet. Shallow wrappers get commoditized; the team
+that owns the hardest parts of the stack — capture, a11y, input, permissions, latency,
+reliability on real desktops — wins trust and contracts. We optimize for **technical
+credibility** as much as feature checklists: blog posts that teach, traces you can
+replay, benchmarks on hard tasks, and code that senior engineers respect when they read it.
+
+That depth is also how we **hire**. The best systems people want hard problems, visible
+craft, and a mission that isn’t another CRUD app. Lefa should feel like the kind of
+project you’d join to spend a year inside the Linux desktop stack and agent control
+plane — and be proud of what you shipped.
+
 ## What we’re optimizing for
 
 **Maximum agent control.** Not a narrow automation API — full parity with human interaction.
@@ -23,13 +41,22 @@ If you can click it, type it, copy it, or read it, the agent should be able to a
 **Human-like interaction.** Same input paths, same UI affordances, same failure modes.
 Vision-only hacks are a fallback; native desktop plumbing is the foundation.
 
-**Learning that transfers.** This project is a deep dive into operating systems, display
-servers, accessibility stacks, IPC, security boundaries, and agent loops. Even if the
-product doesn’t pan out, the skills should carry into systems programming, platform
-engineering, and agent infrastructure elsewhere.
+**Depth on purpose.** We choose the hard path when it teaches something real: Wayland
+portals, AT-SPI round trips, sandbox boundaries, headless displays, agent grounding.
+Interesting engineering isn’t a tax — it’s the product story, the moat, and the reason
+strong candidates pay attention.
+
+**Learning that transfers.** Building Lefa is a deliberate education in systems that
+matter beyond this company: OS interfaces, D-Bus, display servers, accessibility,
+IPC, security models, and agent architecture. If the business doesn’t work, the
+founder and the team should walk away with skills that plug directly into platform
+engineering, infra, security, robotics, or the next agent startup — not shelfware and
+regret.
 
 **Open by default.** Source, protocol, and implementation visible. No vendor lock-in on
-the control plane.
+the control plane. Open core builds trust with developers; the business lives in
+hosted runtime, enterprise controls, support, and the polish to run this in production
+at scale.
 
 ## Platform bet: Linux first
 
@@ -61,6 +88,10 @@ Wayland, AT-SPI2, portals, and the real-world messiness of modern desktops.
    a working loop on a real Linux desktop tomorrow; benchmarks and safety rails as it
    matures.
 
+6. **Write it down.** Architecture notes, failure postmortems, and “how this works under
+   the hood” content aren’t marketing fluff — they recruit engineers, earn design partners,
+   and force clarity before the code ossifies.
+
 ## Goals
 
 | Goal              | Meaning                                                                          |
@@ -70,20 +101,36 @@ Wayland, AT-SPI2, portals, and the real-world messiness of modern desktops.
 | **Composability** | MCP tools any model or agent framework can drive without custom glue             |
 | **Teachability**  | Code and docs explain *why*, not just *what* — suitable for deep technical study |
 | **Trust**         | Explicit permissions, observable actions, and a clear security story             |
+| **Company**       | A sustainable business — open core, paid runtime and enterprise — not a grant project |
+| **Magnetism**     | Hard, legible problems that excite senior engineers and make hiring a strength   |
 
 ## What success looks like
 
 - An agent on a Linux machine can browse, edit, install, configure, and debug software
   through the same UI you would — with traces you can inspect and replay.
 - The stack is the default open-source answer to “how do I give my agent a computer?”
-- Contributors leave knowing how desktops, a11y, and agents fit together — whether or
-  not Lefa becomes the final product they use in production.
+- Teams pay to run it in production because it’s reliable, observable, and supported —
+  not because they had no alternative.
+- Strong engineers reach out because the work looks **worth doing** — and staying is
+  easy because the problems stay hard and the craft stays visible.
+- Contributors and founders leave knowing how desktops, a11y, agents, and production
+  infra fit together — whether or not Lefa is the company they’re still at in five years.
+
+## If this company doesn’t work
+
+That outcome is planned for, not feared. The point of going deep is that failure is
+**expensive in time, not in capability**. You will have touched display servers, a11y
+stacks, input injection, agent loops, MCP, cloud sandboxes, and the gap between “demo”
+and “production.” That transfers cleanly into platform roles, security, devtools,
+robotics, or the next agent company — with a public body of work that proves you did
+the hard thing.
 
 ## Non-goals (for now)
 
 - Beating every closed product on day one in benchmark scores
 - Supporting every OS equally from the start
 - Hiding complexity behind a magic black box — the complexity is part of the point
+- Shallow breadth to chase every agent trend; we go deep on computer use first
 
 ---
 
