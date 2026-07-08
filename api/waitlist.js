@@ -2,10 +2,17 @@ import { Redis } from "@upstash/redis";
 
 // Env vars are injected automatically when you connect Upstash in the Vercel
 // Storage tab. The fallback chain covers both the Upstash Marketplace names
-// (UPSTASH_REDIS_REST_*) and the legacy Vercel KV names (KV_REST_API_*).
+// (UPSTASH_REDIS_REST_*), Vercel's prefixed KV names, and the legacy Vercel
+// KV names (KV_REST_API_*).
 const redis = new Redis({
-  url: process.env.KV_REST_API_URL || process.env.UPSTASH_REDIS_REST_URL,
-  token: process.env.KV_REST_API_TOKEN || process.env.UPSTASH_REDIS_REST_TOKEN,
+  url:
+    process.env.KV_REST_API_URL ||
+    process.env.UPSTASH_REDIS_REST_URL ||
+    process.env.UPSTASH_REDIS_REST_KV_REST_API_URL,
+  token:
+    process.env.KV_REST_API_TOKEN ||
+    process.env.UPSTASH_REDIS_REST_TOKEN ||
+    process.env.UPSTASH_REDIS_REST_KV_REST_API_TOKEN,
 });
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
