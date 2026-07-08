@@ -15,18 +15,29 @@ Mac-only. That leaves out the machines where most serious agent work will actual
 
 Lefa exists to fill that gap: **open computer use for the platforms agents will live on.**
 
-## Building a business
+## Building company value
 
 This is not a side project or a demo — the goal is a **real company** built on top of
-open computer use. Agents that can operate Linux desktops are infrastructure: every
-company shipping agentic software will need eyes and hands on a machine. Lefa can be
-the layer they build on.
+open computer use. But the company should not be judged first by short-term monetization.
+At this stage, the signal that matters is whether Lefa becomes the obvious open-source
+layer for giving agents eyes and hands on Linux machines.
 
-The business and the depth are the same bet. Shallow wrappers get commoditized; the team
+The growth metrics are developer traction: **GitHub stars, real usage, downloads,
+integrations, repeat users, and visible adoption by teams building agents**. Those are the
+signals that prove the product matters, the market is pulling, and the work is becoming
+part of the agent infrastructure conversation.
+
+The return path is building something strategically valuable enough to be acquired: an
+amazing product, amazing traction, and an amazing team solving a hard problem that larger
+AI, developer tooling, cloud, or infrastructure companies will need. Customer commitments
+can validate production demand later, but they are not the north star.
+
+The company and the depth are the same bet. Shallow wrappers get commoditized; the team
 that owns the hardest parts of the stack — capture, a11y, input, permissions, latency,
-reliability on real desktops — wins trust and contracts. We optimize for **technical
-credibility** as much as feature checklists: blog posts that teach, traces you can
-replay, benchmarks on hard tasks, and code that senior engineers respect when they read it.
+reliability on real desktops — wins trust, adoption, and strategic value. We optimize for
+**technical credibility** as much as feature checklists: blog posts that teach, traces you
+can replay, benchmarks on hard tasks, and code that senior engineers respect when they
+read it.
 
 That depth is also how we **hire**. The best systems people want hard problems, visible
 craft, and a mission that isn’t another CRUD app. Lefa should feel like the kind of
@@ -54,9 +65,9 @@ engineering, infra, security, robotics, or the next agent startup — not shelfw
 regret.
 
 **Open by default.** Source, protocol, and implementation visible. No vendor lock-in on
-the control plane. Open core builds trust with developers; the business lives in
-hosted runtime, enterprise controls, support, and the polish to run this in production
-at scale.
+the control plane. Open source builds trust with developers; the company value comes from
+becoming the default, deeply credible layer that teams already use before they ever talk
+to us.
 
 ## Platform bet: Linux first
 
@@ -101,7 +112,7 @@ Wayland, AT-SPI2, portals, and the real-world messiness of modern desktops.
 | **Composability** | MCP tools any model or agent framework can drive without custom glue             |
 | **Teachability**  | Code and docs explain *why*, not just *what* — suitable for deep technical study |
 | **Trust**         | Explicit permissions, observable actions, and a clear security story             |
-| **Company**       | A sustainable business — open core, paid runtime and enterprise — not a grant project |
+| **Company**       | A company-quality product, traction, and team with obvious strategic acquisition value |
 | **Magnetism**     | Hard, legible problems that excite senior engineers and make hiring a strength   |
 
 ## What success looks like
@@ -109,8 +120,10 @@ Wayland, AT-SPI2, portals, and the real-world messiness of modern desktops.
 - An agent on a Linux machine can browse, edit, install, configure, and debug software
   through the same UI you would — with traces you can inspect and replay.
 - The stack is the default open-source answer to “how do I give my agent a computer?”
-- Teams pay to run it in production because it’s reliable, observable, and supported —
-  not because they had no alternative.
+- GitHub stars, usage, downloads, and integrations show that developers are choosing
+  Lefa because it solves a real problem.
+- The company has clear strategic acquisition value: a hard technical product, visible
+  traction, and a team capable of owning computer use infrastructure.
 - Strong engineers reach out because the work looks **worth doing** — and staying is
   easy because the problems stay hard and the craft stays visible.
 - Contributors and founders leave knowing how desktops, a11y, agents, and production
