@@ -1,7 +1,7 @@
 {
   "name": "Lefa",
   "short_name": "Lefa",
-  "description": "Open computer use for Linux — eyes and hands for AI agents, over MCP.",
+  "description": "Lefa is the open source Agent IDE we're building for people who run coding agents all day.",
   "icons": [
     { "src": "/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any maskable" },
     { "src": "/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
