@@ -1,10 +1,10 @@
 <!doctype html>
-<html lang="en">
+< lang="en">
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Lefa — Open computer use for Linux</title>
-<meta name="description" content="Lefa gives AI agents eyes and hands on any Linux machine — screenshots, accessibility trees, and native input, exposed over MCP. Join the waitlist." />
+<title>Lefa: an open source Agent IDE</title>
+<meta name="description" content="Lefa is the open source Agent IDE we're building for people who run coding agents all day. The idea is simple: every task gets its own workspace. Any model, no lock-in." />
 <link rel="icon" href="/favicon.ico" sizes="32x32" />
 <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
 <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
@@ -13,7 +13,7 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
 <link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700;800&family=Geist+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
 <style>
-  /* Lefa design tokens — see DESIGN.md */
+  /* Lefa design tokens. See DESIGN.md. */
   :root {
     --background: #09090b;            /* zinc-950 */
     --foreground: #fafafa;            /* zinc-50 */
@@ -119,10 +119,11 @@
   .hero > * { animation: rise 1s var(--ease) both; }
   .hero > *:nth-child(1) { animation-delay: 0.1s; }
   .hero > *:nth-child(2) { animation-delay: 0.2s; }
-  .hero > *:nth-child(3) { animation-delay: 0.32s; }
-  .hero > *:nth-child(4) { animation-delay: 0.44s; }
-  .hero > *:nth-child(5) { animation-delay: 0.56s; }
-  .hero > *:nth-child(6) { animation-delay: 0.68s; }
+  .hero > *:nth-child(3) { animation-delay: 0.28s; }
+  .hero > *:nth-child(4) { animation-delay: 0.36s; }
+  .hero > *:nth-child(5) { animation-delay: 0.46s; }
+  .hero > *:nth-child(6) { animation-delay: 0.56s; }
+  .hero > *:nth-child(7) { animation-delay: 0.68s; }
 
   .badge {
     display: inline-flex; align-items: center; gap: 9px;
@@ -138,9 +139,15 @@
   h1 {
     font-size: clamp(40px, 4.8vw, 82px);
     line-height: 1.04; font-weight: 800; letter-spacing: -0.035em;
-    margin-bottom: clamp(14px, 2.4vh, 24px);
+    margin-bottom: clamp(10px, 1.4vh, 14px);
   }
   .accent { color: var(--primary); }
+
+  .hero-subtitle {
+    margin-bottom: 12px; color: var(--foreground);
+    font-size: clamp(15px, 1vw, 18px); line-height: 1.4; font-weight: 600;
+    letter-spacing: -0.01em;
+  }
 
   .sub {
     font-size: clamp(15px, 1.05vw, 20px); line-height: 1.65; color: var(--muted-foreground);
@@ -240,60 +247,150 @@
   .chip:hover { color: var(--foreground); border-color: rgba(163, 230, 53, 0.45); }
   .chip b { color: var(--primary); font-weight: 600; }
 
-  /* ---------- terminal ---------- */
-  .term-wrap { position: relative; animation: rise 1.1s var(--ease) 0.35s both; }
+  /* ---------- workspace visual ---------- */
+  .term-wrap {
+    position: relative; display: grid; place-items: center;
+    animation: rise 1.1s var(--ease) 0.35s both;
+  }
 
   .term-halo {
     position: absolute; inset: -20%;
-    background: radial-gradient(ellipse at 50% 50%, rgba(163,230,53,0.09), transparent 65%);
+    background: radial-gradient(ellipse at 50% 50%, rgba(163,230,53,0.055), transparent 65%);
     filter: blur(30px); z-index: -1;
   }
 
-  .terminal {
-    border-radius: var(--radius-lg); overflow: hidden;
+  .ws-card {
+    width: 100%; max-width: 560px; overflow: hidden;
+    background: var(--card); border-radius: var(--radius-lg);
     border: 1px solid var(--border);
-    background: rgba(24, 24, 27, 0.72);
-    backdrop-filter: blur(18px);
     box-shadow: 0 30px 80px rgba(0,0,0,0.55), inset 0 1px 0 rgba(255,255,255,0.05);
-    animation: floaty 7s ease-in-out infinite;
-  }
-  @keyframes floaty { 50% { transform: translateY(-9px); } }
-
-  .term-bar {
-    display: flex; align-items: center; gap: 8px;
-    padding: 13px 16px; border-bottom: 1px solid var(--border);
-    background: rgba(255,255,255,0.02);
-  }
-  .term-bar .b { width: 11px; height: 11px; border-radius: 50%; }
-  .term-bar .b1 { background: #ff5f57; } .term-bar .b2 { background: #febc2e; } .term-bar .b3 { background: #28c840; }
-  .term-title {
-    margin-left: 10px; font-family: var(--font-mono);
-    font-size: 12px; color: var(--muted-foreground); letter-spacing: 0.02em;
-  }
-  .term-live {
-    margin-left: auto; display: inline-flex; align-items: center; gap: 6px;
-    font-family: var(--font-mono); font-size: 10.5px; color: var(--success); letter-spacing: 0.1em;
-  }
-  .term-live .ld { width: 6px; height: 6px; border-radius: 50%; background: var(--success); animation: pulse 2.2s infinite; }
-
-  .term-body {
-    padding: clamp(20px, 1.6vw, 30px) clamp(22px, 1.8vw, 34px);
-    font-family: var(--font-mono);
-    font-size: clamp(11.5px, 0.72vw, 16px);
-    line-height: 1.95;
-    min-height: clamp(280px, 42vh, 560px);
-    white-space: pre-wrap; word-break: break-word;
   }
 
-  .t-dim { color: var(--faint); } .t-white { color: #e4e4e7; }
-  .t-green { color: var(--success); } .t-lime { color: var(--primary); }
-  .t-yellow { color: #fbbf24; }
-
-  .caret {
-    display: inline-block; width: 8px; height: 15px; vertical-align: -2px;
-    background: var(--primary); animation: blink 1s steps(1) infinite;
+  .ws-titlebar {
+    height: 44px; display: flex; align-items: center; gap: 7px;
+    padding: 0 16px; border-bottom: 1px solid var(--border);
+    background: rgba(255,255,255,0.018);
   }
-  @keyframes blink { 50% { opacity: 0; } }
+  .ws-window-dot { width: 8px; height: 8px; border-radius: 50%; background: #3f3f46; }
+  .ws-window-dot:nth-child(2) { background: #52525b; }
+  .ws-title {
+    margin-left: 8px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    font-family: var(--font-mono); font-size: 11.5px; color: var(--muted-foreground);
+  }
+
+  .ws-head {
+    display: grid; grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center; gap: 16px; padding: 20px 24px 18px;
+  }
+  .ws-task {
+    min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    font-size: 16px; line-height: 1.3; font-weight: 600; letter-spacing: -0.015em;
+  }
+  .ws-badges { display: flex; align-items: center; gap: 8px; }
+  .ws-badge {
+    height: 25px; display: inline-flex; align-items: center; justify-content: center; gap: 7px;
+    padding: 0 9px; border-radius: 999px; border: 1px solid var(--border);
+    font-family: var(--font-mono); font-size: 10.5px; color: var(--muted-foreground); white-space: nowrap;
+  }
+  .ws-status {
+    position: relative; width: 124px; border-color: rgba(163,230,53,0.2);
+    background: var(--primary-soft); color: var(--primary);
+  }
+  .ws-status > span {
+    position: absolute; inset: 0; display: inline-flex; align-items: center; justify-content: center; gap: 7px;
+    transition: opacity 0.35s var(--ease), transform 0.35s var(--ease);
+  }
+  .ws-status-ready { opacity: 0; transform: translateY(4px); color: var(--success); }
+  .ws-card.is-ready .ws-status {
+    background: rgba(34,197,94,0.08); border-color: rgba(34,197,94,0.3);
+  }
+  .ws-card.is-ready .ws-status-running { opacity: 0; transform: translateY(-4px); }
+  .ws-card.is-ready .ws-status-ready { opacity: 1; transform: none; }
+  .ws-status-dot { display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: currentColor; animation: pulse-lime 2.2s infinite; }
+  @keyframes pulse-lime {
+    0% { box-shadow: 0 0 0 0 rgba(163,230,53,0.5); }
+    70%, 100% { box-shadow: 0 0 0 6px rgba(163,230,53,0); }
+  }
+
+  .ws-rail { padding: 2px 24px 14px; transition: opacity 0.6s var(--ease); }
+  .ws-track {
+    position: relative; height: 74px; display: grid; grid-template-columns: repeat(5, 1fr);
+  }
+  .ws-track::before {
+    content: ""; position: absolute; top: 14px; left: 10%; right: 10%; height: 1px;
+    background: #3f3f46;
+  }
+  .ws-stage {
+    position: relative; z-index: 1; display: flex; flex-direction: column; align-items: center;
+  }
+  .ws-node {
+    width: 9px; height: 9px; margin-top: 10px; border-radius: 50%;
+    background: var(--card); border: 1px solid #52525b;
+    box-shadow: 0 0 0 3px var(--card); transform: scale(0);
+    transition: transform 0.45s var(--ease), background 0.3s, border-color 0.3s, box-shadow 0.3s;
+  }
+  .ws-stage.on .ws-node {
+    transform: scale(1); background: var(--primary); border-color: var(--primary);
+    box-shadow: 0 0 0 3px var(--card), 0 0 14px rgba(163,230,53,0.35);
+  }
+  .ws-stage-cloud .ws-node {
+    width: 22px; height: 18px; margin-top: 5px; border: 0; border-radius: 0;
+    background: var(--card); box-shadow: none; color: var(--faint);
+    display: grid; place-items: center;
+  }
+  .ws-stage-cloud svg { width: 18px; height: 13px; display: block; }
+  .ws-stage-cloud.on .ws-node { background: var(--card); color: var(--primary); box-shadow: none; }
+  .ws-stage-label {
+    margin-top: 23px; font-family: var(--font-mono); font-size: 10px; font-weight: 500;
+    color: var(--faint); letter-spacing: 0.09em; transition: color 0.3s;
+  }
+  .ws-stage.on .ws-stage-label { color: var(--muted-foreground); }
+  .ws-branch {
+    position: absolute; z-index: 0; left: 50%; top: 14px; width: 16%; height: 20px;
+    border-left: 1px solid var(--primary); border-bottom: 1px solid var(--primary);
+    border-bottom-left-radius: 8px; opacity: 0; transform: scaleX(0.65); transform-origin: left top;
+    transition: opacity 0.45s var(--ease), transform 0.45s var(--ease);
+  }
+  .ws-branch::before, .ws-branch::after {
+    content: ""; position: absolute; bottom: -3px; width: 5px; height: 5px;
+    border-radius: 50%; background: var(--primary); box-shadow: 0 0 8px rgba(163,230,53,0.3);
+  }
+  .ws-branch::before { left: 40%; }
+  .ws-branch::after { right: -2px; }
+  .ws-stage[data-step="2"].on ~ .ws-branch { opacity: 0.7; transform: scaleX(1); }
+
+  .ws-feed { margin: 0 24px; border-top: 1px solid rgba(255,255,255,0.05); transition: opacity 0.6s var(--ease); }
+  .ws-event {
+    min-height: 46px; display: grid; grid-template-columns: 18px minmax(0, 1fr) auto;
+    align-items: center; gap: 10px; border-bottom: 1px solid rgba(255,255,255,0.045);
+    font-family: var(--font-mono); font-size: 12px;
+    opacity: 0; transform: translateY(8px);
+    transition: opacity 0.5s var(--ease), transform 0.5s var(--ease);
+  }
+  .ws-event.on { opacity: 1; transform: none; }
+  .ws-event-icon { color: var(--primary); text-align: center; }
+  .ws-event-copy { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #e4e4e7; }
+  .ws-event-time { color: var(--faint); font-size: 10.5px; }
+
+  .ws-diff { padding: 17px 24px 21px; opacity: 0; transform: translateY(6px); transition: opacity 0.5s var(--ease), transform 0.5s var(--ease); }
+  .ws-card.is-ready .ws-diff { opacity: 1; transform: none; }
+  .ws-diff-meter { height: 4px; display: flex; gap: 2px; margin-bottom: 15px; overflow: hidden; border-radius: 999px; background: var(--secondary); }
+  .ws-diff-add, .ws-diff-del { transform: scaleX(0); transform-origin: left; transition: transform 0.65s var(--ease); }
+  .ws-diff-add { width: 85%; background: var(--primary); }
+  .ws-diff-del { width: 15%; background: #ef4444; }
+  .ws-card.is-ready .ws-diff-add, .ws-card.is-ready .ws-diff-del { transform: scaleX(1); }
+  .ws-diff-meta { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+  .ws-diff-stat { font-family: var(--font-mono); font-size: 11.5px; color: var(--muted-foreground); }
+  .ws-review {
+    height: 30px; display: inline-flex; align-items: center; padding: 0 12px;
+    border-radius: var(--radius); border: 1px solid var(--input);
+    background: transparent; color: var(--foreground); font-family: var(--font-body); font-size: 12px; font-weight: 550;
+  }
+  .ws-card.is-resetting .ws-rail, .ws-card.is-resetting .ws-feed, .ws-card.is-resetting .ws-diff { opacity: 0; }
+
+  @media (max-width: 1200px) and (min-width: 961px) {
+    .ws-agent-count { display: none; }
+  }
 
   /* ---------- footer ---------- */
   footer {
@@ -343,9 +440,9 @@
     .term-wrap { display: none; }
     h1 { font-size: clamp(36px, 9vw, 52px); }
   }
-  /* small or short screens: the hero may not fit one screen — let the page scroll */
-  @media (max-width: 960px), (max-height: 640px) {
-    body { height: auto; min-height: 100dvh; overflow-y: auto; }
+  /* Small or short screens: let the page scroll when the hero does not fit. */
+  @media (max-width: 960px), (max-height: 820px) {
+    body { height: auto; min-height: 100dvh; overflow-x: hidden; overflow-y: auto; }
     main { padding-top: clamp(8px, 2vh, 24px); padding-bottom: clamp(16px, 3vh, 32px); }
   }
   @media (max-width: 640px) {
@@ -357,7 +454,10 @@
   }
 
   @media (prefers-reduced-motion: reduce) {
-    *, *::before, *::after { animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; }
+    *, *::before, *::after {
+      animation-duration: 0.01ms !important; animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+    }
   }
 </style>
 </head>
@@ -391,49 +491,91 @@
 
 <main>
   <section class="hero">
-    <div class="badge"><span class="dot"></span> OPEN SOURCE · LINUX-FIRST · MCP-NATIVE</div>
-    <h1>Give your agents<br /><span class="accent">eyes and hands.</span></h1>
+    <div class="badge"><span class="dot"></span> OPEN SOURCE · ANY MODEL</div>
+    <h1>The <span class="accent">Agent IDE</span><br />of the future.</h1>
+    <p class="hero-subtitle">Made by developers, for developers.</p>
     <p class="sub">
-      Lefa is <strong>open-source computer use</strong> for the machines agents actually run on.
-      Screenshots, accessibility trees, and native input on any Linux box —
-      exposed as clean <strong>MCP tools</strong> any model can drive.
+      We run coding agents all day, and juggling them across terminals, tabs, and worktrees got old.
+      So we're building Lefa around a simple idea: every task gets its own workspace, one you can
+      checkpoint, fork, and leave running in the cloud after your laptop closes. We're keeping Lefa
+      open source and model-neutral. It's still early.
     </p>
     <div class="cta-row">
-      <a class="btn-primary" href="https://github.com/lefa-ai/lefa">Get started <span class="arrow">→</span></a>
-      <a class="btn-ghost" href="https://x.com/lefa_ai">Follow the build</a>
+      <a class="btn-primary" href="https://github.com/lefa-ai/lefa">View on GitHub <span class="arrow">→</span></a>
+      <a class="btn-ghost" href="https://x.com/lefa_ai">Follow @lefa_ai</a>
     </div>
     <div class="wl" id="waitlist">
       <form id="wl-form" method="post" action="/api/waitlist" novalidate>
-        <input id="wl-email" type="email" name="email" placeholder="you@company.com"
+        <input id="wl-email" type="email" name="email" placeholder="you@wherever.dev"
                autocomplete="email" spellcheck="false" aria-label="Email address" />
-        <button class="wl-btn" type="submit">Join waitlist <span class="arrow">→</span></button>
+        <button class="wl-btn" type="submit">Get early access <span class="arrow">→</span></button>
       </form>
-      <p class="wl-note">Early access — one email when it ships. No spam.</p>
+      <p class="wl-note">Desktop app first. One email when your invite is ready.</p>
       <div class="wl-done" role="status">
         <span class="tick">✓</span>
-        <span>You're on the list — <span id="wl-echo"></span></span>
+        <span>You're on the list: <span id="wl-echo"></span></span>
       </div>
       <div class="wl-alt" role="status">
-        <span>Signups aren't live yet — <a id="wl-mailto" href="mailto:m@lefa.ai?subject=Waitlist">email m@lefa.ai</a> and we'll add you by hand.</span>
+        <span>Signups aren't live yet. <a id="wl-mailto" href="mailto:m@lefa.ai?subject=Waitlist">Email m@lefa.ai</a> and we'll add you by hand.</span>
       </div>
     </div>
     <div class="chips">
-      <span class="chip"><b>◈</b> AT-SPI perception</span>
-      <span class="chip"><b>▤</b> Wayland + X11</span>
-      <span class="chip"><b>⚙</b> Rust core</span>
-      <span class="chip"><b>◇</b> Runs in your cloud</span>
+      <span class="chip"><b>◈</b> every task, a workspace</span>
+      <span class="chip"><b>⑂</b> checkpoint · fork · diff</span>
+      <span class="chip"><b>⇄</b> laptop → cloud → phone</span>
+      <span class="chip"><b>◇</b> any model, no lock-in</span>
     </div>
   </section>
 
   <section class="term-wrap">
     <div class="term-halo"></div>
-    <div class="terminal">
-      <div class="term-bar">
-        <span class="b b1"></span><span class="b b2"></span><span class="b b3"></span>
-        <span class="term-title">agent@cloud — lefa mcp</span>
-        <span class="term-live"><span class="ld"></span>LIVE</span>
+    <div class="ws-card" role="img"
+         aria-label="Illustration of a Lefa workspace: one task with its agent running, checkpoints and a fork on a timeline, and a finished diff ready to review.">
+      <div aria-hidden="true">
+        <div class="ws-titlebar">
+          <span class="ws-window-dot"></span>
+          <span class="ws-window-dot"></span>
+          <span class="ws-window-dot"></span>
+          <span class="ws-title">lefa · workspace preview</span>
+        </div>
+
+        <div class="ws-head">
+          <div class="ws-task">Extract billing into a worker</div>
+          <div class="ws-badges">
+            <span class="ws-badge ws-status">
+              <span class="ws-status-running"><i class="ws-status-dot"></i>agent running</span>
+              <span class="ws-status-ready">✓ ready to review</span>
+            </span>
+            <span class="ws-badge ws-agent-count">2 agents</span>
+          </div>
+        </div>
+
+        <div class="ws-rail ws-animated">
+          <div class="ws-track">
+            <div class="ws-stage" data-step="0"><span class="ws-node"></span><span class="ws-stage-label">INIT</span></div>
+            <div class="ws-stage" data-step="1"><span class="ws-node"></span><span class="ws-stage-label">CKPT</span></div>
+            <div class="ws-stage" data-step="2"><span class="ws-node"></span><span class="ws-stage-label">FORK</span></div>
+            <div class="ws-stage ws-stage-cloud" data-step="3"><span class="ws-node"><svg viewBox="0 0 24 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M6.5 14h10.25a4.25 4.25 0 0 0 .65-8.45A6 6 0 0 0 6 7.2 3.4 3.4 0 0 0 6.5 14Z"/></svg></span><span class="ws-stage-label">CLOUD</span></div>
+            <div class="ws-stage" data-step="4"><span class="ws-node"></span><span class="ws-stage-label">REVIEW</span></div>
+            <span class="ws-branch"></span>
+          </div>
+        </div>
+
+        <div class="ws-feed ws-animated">
+          <div class="ws-event" data-step="0"><span class="ws-event-icon">◈</span><span class="ws-event-copy">workspace created · branched from main</span><span class="ws-event-time">+0s</span></div>
+          <div class="ws-event" data-step="1"><span class="ws-event-icon">▣</span><span class="ws-event-copy">checkpoint · tests green</span><span class="ws-event-time">+2m</span></div>
+          <div class="ws-event" data-step="2"><span class="ws-event-icon">⑂</span><span class="ws-event-copy">fork · trying a faster model on the parser</span><span class="ws-event-time">+9m</span></div>
+          <div class="ws-event" data-step="3"><span class="ws-event-icon">⇄</span><span class="ws-event-copy">laptop closed · kept working in the cloud</span><span class="ws-event-time">+18m</span></div>
+        </div>
+
+        <div class="ws-diff ws-animated">
+          <div class="ws-diff-meter"><span class="ws-diff-add"></span><span class="ws-diff-del"></span></div>
+          <div class="ws-diff-meta">
+            <span class="ws-diff-stat">+0 −0 · 0 files</span>
+            <span class="ws-review">Review diff</span>
+          </div>
+        </div>
       </div>
-      <div class="term-body" id="term"></div>
     </div>
   </section>
 </main>
@@ -446,7 +588,7 @@
 <div class="cur-dot" aria-hidden="true"></div>
 
 <footer>
-  <span>© 2026 Lefa — built in the open.</span>
+  <span>© 2026 Lefa. Built in the open.</span>
   <div class="links">
     <a href="https://github.com/lefa-ai/lefa">GitHub</a>
     <a href="https://x.com/lefa_ai">X</a>
@@ -454,99 +596,151 @@
 </footer>
 
 <script>
-  const REDUCED_MOTION = matchMedia("(prefers-reduced-motion: reduce)").matches;
+  const MOTION_QUERY = matchMedia("(prefers-reduced-motion: reduce)");
 
-  // ---- terminal typing animation ----
-  const lines = [
-    [["t-dim", "$ "], ["t-white", "lefa mcp"]],
-    [["t-green", "✓ "], ["t-dim", "lefad connected · session "], ["t-lime", "wayland"], ["t-dim", " · a11y tree ready"]],
-    [["", ""]],
-    [["t-lime", "→ "], ["t-white", "get_app_state"], ["t-dim", "("], ["t-yellow", "\"firefox\""], ["t-dim", ")"]],
-    [["t-dim", "  · 214 elements · focused: "], ["t-lime", "search_input"], ["t-dim", " · shot 1280×720"]],
-    [["t-lime", "→ "], ["t-white", "type_text"], ["t-dim", "("], ["t-yellow", "\"lefa.ai\""], ["t-dim", ")"]],
-    [["t-lime", "→ "], ["t-white", "press_key"], ["t-dim", "("], ["t-yellow", "\"Enter\""], ["t-dim", ")"]],
-    [["t-lime", "→ "], ["t-white", "click"], ["t-dim", "(element="], ["t-lime", "42"], ["t-dim", ")  "], ["t-dim", "# “Get started”"]],
-    [["", ""]],
-    [["t-green", "✓ done"], ["t-dim", " · 4 actions · 1.8s · 0 retries"]],
-  ];
+  // ---- workspace lifecycle illustration ----
+  (function () {
+    const card = document.querySelector(".ws-card");
+    if (!card) return;
 
-  const term = document.getElementById("term");
-  const caret = document.createElement("span");
-  caret.className = "caret";
+    const stages = Array.from(card.querySelectorAll(".ws-stage"));
+    const events = Array.from(card.querySelectorAll(".ws-event"));
+    const stat = card.querySelector(".ws-diff-stat");
+    const motion = MOTION_QUERY;
+    const timers = new Set();
+    let statFrame = 0;
+    const firstStepAt = 700;
+    const stepDelay = 1700;
 
-  let li = 0, ci = 0, si = 0, spans = [];
-
-  function currentLineText(l) { return lines[l].map(p => p[1]).join(""); }
-
-  function step() {
-    if (li >= lines.length) {
-      term.appendChild(caret);
-      setTimeout(() => { term.innerHTML = ""; li = 0; ci = 0; si = 0; spans = []; step(); }, 3800);
-      return;
+    function schedule(callback, delay) {
+      const timer = setTimeout(() => {
+        timers.delete(timer);
+        callback();
+      }, delay);
+      timers.add(timer);
     }
-    const segs = lines[li];
-    if (si === 0 && ci === 0) {
-      spans = segs.map(([cls]) => {
-        const s = document.createElement("span");
-        if (cls) s.className = cls;
-        term.appendChild(s);
-        return s;
+
+    function stop() {
+      timers.forEach((timer) => clearTimeout(timer));
+      timers.clear();
+      if (statFrame) cancelAnimationFrame(statFrame);
+      statFrame = 0;
+    }
+
+    function reset() {
+      if (statFrame) cancelAnimationFrame(statFrame);
+      statFrame = 0;
+      card.classList.remove("is-ready", "is-resetting");
+      stages.forEach((stage) => stage.classList.remove("on"));
+      events.forEach((event) => event.classList.remove("on"));
+      stat.textContent = "+0 −0 · 0 files";
+    }
+
+    function finishImmediately() {
+      reset();
+      stages.forEach((stage) => stage.classList.add("on"));
+      events.forEach((event) => event.classList.add("on"));
+      stat.textContent = "+214 −38 · 12 files";
+      card.classList.add("is-ready");
+    }
+
+    function countDiff() {
+      const started = performance.now();
+      function tick(now) {
+        if (motion.matches) {
+          stat.textContent = "+214 −38 · 12 files";
+          statFrame = 0;
+          return;
+        }
+        const progress = Math.min((now - started) / 600, 1);
+        const eased = 1 - Math.pow(1 - progress, 3);
+        stat.textContent = "+" + Math.round(214 * eased) + " −" + Math.round(38 * eased) + " · " + Math.round(12 * eased) + " files";
+        if (progress < 1) statFrame = requestAnimationFrame(tick);
+        else statFrame = 0;
+      }
+      statFrame = requestAnimationFrame(tick);
+    }
+
+    function play() {
+      reset();
+
+      events.forEach((event, index) => {
+        schedule(() => {
+          stages[index].classList.add("on");
+          event.classList.add("on");
+        }, firstStepAt + index * stepDelay);
       });
-      caret.remove(); term.appendChild(caret);
+
+      const reviewAt = firstStepAt + events.length * stepDelay;
+      schedule(() => {
+        stages[4].classList.add("on");
+        card.classList.add("is-ready");
+        countDiff();
+      }, reviewAt);
+
+      schedule(() => card.classList.add("is-resetting"), reviewAt + 5000);
+      schedule(play, reviewAt + 5700);
     }
-    const [, text] = segs[si];
-    if (ci < text.length) {
-      spans[si].textContent += text[ci++];
-      caret.remove(); term.appendChild(caret);
-      setTimeout(step, lines[li][0][0] === "t-dim" && si === 0 ? 26 : 14 + Math.random() * 26);
-    } else {
-      si++; ci = 0;
-      if (si >= segs.length) {
-        term.appendChild(document.createTextNode("\n"));
-        li++; si = 0;
-        const pause = currentLineText(li - 1).startsWith("✓") ? 500 : currentLineText(li - 1) === "" ? 60 : 260;
-        setTimeout(step, pause);
-      } else { step(); }
-    }
-  }
-  if (REDUCED_MOTION) {
-    // no typing animation — render the full transcript at once
-    lines.forEach((segs) => {
-      segs.forEach(([cls, text]) => {
-        const s = document.createElement("span");
-        if (cls) s.className = cls;
-        s.textContent = text;
-        term.appendChild(s);
-      });
-      term.appendChild(document.createTextNode("\n"));
+
+    motion.addEventListener("change", (event) => {
+      stop();
+      if (event.matches) finishImmediately();
+      else play();
     });
-  } else {
-    setTimeout(step, 1200);
-  }
+
+    if (motion.matches) finishImmediately();
+    else play();
+  })();
 
   // ---- cursor-follow glow ----
   const glow = document.getElementById("glow");
   let gx = innerWidth / 2, gy = innerHeight * 0.4, tx = gx, ty = gy;
-  if (!REDUCED_MOTION) {
-    addEventListener("mousemove", e => { tx = e.clientX; ty = e.clientY; });
-    (function loop() {
-      gx += (tx - gx) * 0.06; gy += (ty - gy) * 0.06;
-      glow.style.left = gx + "px"; glow.style.top = gy + "px";
-      requestAnimationFrame(loop);
-    })();
+  let glowFrame = 0;
+
+  function trackGlow(event) {
+    tx = event.clientX;
+    ty = event.clientY;
   }
+
+  function moveGlow() {
+    gx += (tx - gx) * 0.06; gy += (ty - gy) * 0.06;
+    glow.style.left = gx + "px"; glow.style.top = gy + "px";
+    glowFrame = requestAnimationFrame(moveGlow);
+  }
+
+  function startGlow() {
+    if (glowFrame) return;
+    addEventListener("mousemove", trackGlow);
+    glowFrame = requestAnimationFrame(moveGlow);
+  }
+
+  function stopGlow() {
+    removeEventListener("mousemove", trackGlow);
+    if (glowFrame) cancelAnimationFrame(glowFrame);
+    glowFrame = 0;
+    glow.style.left = "";
+    glow.style.top = "";
+  }
+
+  function syncGlowMotion() {
+    if (MOTION_QUERY.matches) stopGlow();
+    else startGlow();
+  }
+
+  MOTION_QUERY.addEventListener("change", syncGlowMotion);
+  syncGlowMotion();
 
   // ---- brand cursor: instant dot + lime pentagon (DESIGN.md spec) ----
   (function () {
-    if (REDUCED_MOTION || !matchMedia("(pointer: fine)").matches) return;
+    if (!matchMedia("(pointer: fine)").matches) return;
     const dot = document.querySelector(".cur-dot");
     const pent = document.querySelector(".cur-pent");
 
     let x = innerWidth / 2, y = innerHeight / 2, px = x, py = y, shown = false;
-    let hot = false;
+    let cursorFrame = 0, last = performance.now(), running = false;
 
-    addEventListener("mousemove", (e) => {
-      x = e.clientX; y = e.clientY;
+    function moveCursor(event) {
+      x = event.clientX; y = event.clientY;
       if (!shown) {
         shown = true; px = x; py = y;
         // hide the native cursor only once the custom one has a position
@@ -554,29 +748,66 @@
         dot.style.opacity = "1"; pent.style.opacity = "1";
       }
       dot.style.transform = "translate(" + x + "px," + y + "px)";
-    });
+    }
 
-    document.documentElement.addEventListener("mouseleave", () => {
+    function leaveDocument() {
       shown = false;
       dot.style.opacity = "0"; pent.style.opacity = "0";
-    });
+    }
 
-    addEventListener("mouseover", (e) => {
-      hot = !!(e.target.closest && e.target.closest("a, button, input, .chip"));
+    function updateCursorState(event) {
+      const hot = !!(event.target.closest && event.target.closest("a, button, input, .chip"));
       pent.classList.toggle("hot", hot);
-    });
-    addEventListener("mousedown", () => pent.classList.add("down"));
-    addEventListener("mouseup", () => pent.classList.remove("down"));
+    }
 
-    let last = performance.now();
-    (function loop(now) {
+    function pressCursor() { pent.classList.add("down"); }
+    function releaseCursor() { pent.classList.remove("down"); }
+
+    function movePentagon(now) {
       const dt = Math.min((now - last) / 1000, 0.05);
       last = now;
       const k = 1 - Math.exp(-6 * dt);   // λ=6 time-corrected damping
       px += (x - px) * k; py += (y - py) * k;
       pent.style.transform = "translate(" + px + "px," + py + "px)";
-      requestAnimationFrame(loop);
-    })(last);
+      cursorFrame = requestAnimationFrame(movePentagon);
+    }
+
+    function startCursor() {
+      if (running) return;
+      running = true;
+      last = performance.now();
+      addEventListener("mousemove", moveCursor);
+      addEventListener("mouseover", updateCursorState);
+      addEventListener("mousedown", pressCursor);
+      addEventListener("mouseup", releaseCursor);
+      document.documentElement.addEventListener("mouseleave", leaveDocument);
+      cursorFrame = requestAnimationFrame(movePentagon);
+    }
+
+    function stopCursor() {
+      if (!running) return;
+      running = false;
+      removeEventListener("mousemove", moveCursor);
+      removeEventListener("mouseover", updateCursorState);
+      removeEventListener("mousedown", pressCursor);
+      removeEventListener("mouseup", releaseCursor);
+      document.documentElement.removeEventListener("mouseleave", leaveDocument);
+      if (cursorFrame) cancelAnimationFrame(cursorFrame);
+      cursorFrame = 0;
+      shown = false;
+      document.documentElement.classList.remove("cc");
+      dot.style.opacity = "0";
+      pent.style.opacity = "0";
+      pent.classList.remove("hot", "down");
+    }
+
+    function syncCursorMotion() {
+      if (MOTION_QUERY.matches) stopCursor();
+      else startCursor();
+    }
+
+    MOTION_QUERY.addEventListener("change", syncCursorMotion);
+    syncCursorMotion();
   })();
 
   // ---- waitlist ----
@@ -610,10 +841,10 @@
           body: JSON.stringify({ email }),
         });
         if (!res.ok) throw new Error("waitlist endpoint returned " + res.status);
-        echo.textContent = email + " — we'll ping you at launch.";
+        echo.textContent = email + ". We'll ping you at launch.";
         box.classList.add("ok");
       } catch (_) {
-        // no endpoint yet — hand off to a real channel instead of faking success
+        // No endpoint yet. Hand off to a real channel instead of faking success.
         mailto.href = "mailto:m@lefa.ai?subject=Waitlist&body=" + encodeURIComponent("Please add " + email + " to the Lefa waitlist.");
         box.classList.add("alt");
       } finally {
