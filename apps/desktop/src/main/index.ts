@@ -1,5 +1,20 @@
-import { app, BrowserWindow } from 'electron'
+import { app, BrowserWindow, dialog, ipcMain } from 'electron'
 import { join } from 'node:path'
+import { workspaceChannel } from '../shared/api'
+
+function registerIpcHandlers(): void {
+  ipcMain.handle(workspaceChannel, async (event) => {
+    const window = BrowserWindow.fromWebContents(event.sender)
+
+    if (!window) return null
+
+    const result = await dialog.showOpenDialog(window, {
+      properties: ['openDirectory']
+    })
+
+    return result.canceled ? null : (result.filePaths[0] ?? null)
+  })
+}
 
 function createWindow(): void {
   const mainWindow = new BrowserWindow({
@@ -32,6 +47,7 @@ function createWindow(): void {
 }
 
 app.whenReady().then(() => {
+  registerIpcHandlers()
   createWindow()
 
   app.on('activate', () => {
