@@ -2,50 +2,13 @@ import { constants } from 'node:fs'
 import { access, readFile, realpath } from 'node:fs/promises'
 import { isAbsolute, relative, resolve, sep, win32 } from 'node:path'
 
-export const DEFAULT_MAX_LINES = 2000
-export const DEFAULT_MAX_BYTES = 50 * 1024
+const MAX_LINES = 2000
+const MAX_BYTES = 50 * 1024
 
-export interface ReadToolInput {
+interface ReadToolInput {
   path: string
   offset?: number
   limit?: number
-}
-
-export interface ReadTextFileInput extends ReadToolInput {
-  workspaceRoot: string
-}
-
-export interface TruncationResult {
-  content: string
-  truncated: boolean
-  truncatedBy: 'lines' | 'bytes' | null
-  totalLines: number
-  totalBytes: number
-  outputLines: number
-  outputBytes: number
-  lastLinePartial: false
-  firstLineExceedsLimit: boolean
-  maxLines: number
-  maxBytes: number
-}
-
-export interface ReadToolDetails {
-  truncation?: TruncationResult
-}
-
-export interface ReadToolResult {
-  content: string
-  details?: ReadToolDetails
-}
-
-export interface ReadTool {
-  execute: (input: ReadToolInput, signal?: AbortSignal) => Promise<ReadToolResult>
-}
-
-function formatSize(bytes: number): string {
-  if (bytes < 1024) return `${bytes}B`
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)}KB`
-  return `${(bytes / (1024 * 1024)).toFixed(1)}MB`
 }
 
 function splitLinesForCounting(content: string): string[] {
@@ -56,77 +19,31 @@ function splitLinesForCounting(content: string): string[] {
   return lines
 }
 
-function truncateHead(content: string): TruncationResult {
-  const totalBytes = Buffer.byteLength(content, 'utf8')
+function truncateHead(content: string): string[] | undefined {
   const lines = splitLinesForCounting(content)
-  const totalLines = lines.length
 
-  if (totalLines <= DEFAULT_MAX_LINES && totalBytes <= DEFAULT_MAX_BYTES) {
-    return {
-      content,
-      truncated: false,
-      truncatedBy: null,
-      totalLines,
-      totalBytes,
-      outputLines: totalLines,
-      outputBytes: totalBytes,
-      lastLinePartial: false,
-      firstLineExceedsLimit: false,
-      maxLines: DEFAULT_MAX_LINES,
-      maxBytes: DEFAULT_MAX_BYTES
-    }
+  if (lines.length <= MAX_LINES && Buffer.byteLength(content, 'utf8') <= MAX_BYTES) {
+    return undefined
   }
 
-  const firstLineBytes = Buffer.byteLength(lines[0] ?? '', 'utf8')
-
-  if (firstLineBytes > DEFAULT_MAX_BYTES) {
-    return {
-      content: '',
-      truncated: true,
-      truncatedBy: 'bytes',
-      totalLines,
-      totalBytes,
-      outputLines: 0,
-      outputBytes: 0,
-      lastLinePartial: false,
-      firstLineExceedsLimit: true,
-      maxLines: DEFAULT_MAX_LINES,
-      maxBytes: DEFAULT_MAX_BYTES
-    }
+  if (Buffer.byteLength(lines[0] ?? '', 'utf8') > MAX_BYTES) {
+    throw new Error('The first requested line exceeds the 50 KB limit')
   }
 
   const output: string[] = []
   let outputBytes = 0
-  let truncatedBy: 'lines' | 'bytes' = 'lines'
 
-  for (let index = 0; index < lines.length && index < DEFAULT_MAX_LINES; index += 1) {
+  for (let index = 0; index < lines.length && index < MAX_LINES; index += 1) {
     const line = lines[index] ?? ''
     const lineBytes = Buffer.byteLength(line, 'utf8') + (index > 0 ? 1 : 0)
 
-    if (outputBytes + lineBytes > DEFAULT_MAX_BYTES) {
-      truncatedBy = 'bytes'
-      break
-    }
+    if (outputBytes + lineBytes > MAX_BYTES) break
 
     output.push(line)
     outputBytes += lineBytes
   }
 
-  const outputContent = output.join('\n')
-
-  return {
-    content: outputContent,
-    truncated: true,
-    truncatedBy,
-    totalLines,
-    totalBytes,
-    outputLines: output.length,
-    outputBytes: Buffer.byteLength(outputContent, 'utf8'),
-    lastLinePartial: false,
-    firstLineExceedsLimit: false,
-    maxLines: DEFAULT_MAX_LINES,
-    maxBytes: DEFAULT_MAX_BYTES
-  }
+  return output
 }
 
 function normalizePath(filePath: string): string {
@@ -167,10 +84,11 @@ function validateWindow(offset: number | undefined, limit: number | undefined): 
   }
 }
 
-export async function readTextFile(
-  { workspaceRoot, path, offset, limit }: ReadTextFileInput,
+async function readTextFile(
+  workspaceRoot: string,
+  { path, offset, limit }: ReadToolInput,
   signal?: AbortSignal
-): Promise<ReadToolResult> {
+) {
   validateWindow(offset, limit)
   signal?.throwIfAborted()
 
@@ -193,34 +111,27 @@ export async function readTextFile(
   const selectedLines =
     limit === undefined ? lines.slice(startLine) : lines.slice(startLine, startLine + limit)
   const selectedContent = selectedLines.join('\n')
-  const truncation = truncateHead(selectedContent)
+  const truncatedLines = truncateHead(selectedContent)
   const startLineDisplay = startLine + 1
-  let content = truncation.content
-  let details: ReadToolDetails | undefined
+  let content = truncatedLines?.join('\n') ?? selectedContent
 
-  if (truncation.firstLineExceedsLimit) {
-    const firstLineSize = formatSize(Buffer.byteLength(lines[startLine] ?? '', 'utf8'))
-    content = `[Line ${startLineDisplay} is ${firstLineSize}, exceeds ${formatSize(DEFAULT_MAX_BYTES)} limit.]`
-    details = { truncation }
-  } else if (truncation.truncated) {
-    const endLineDisplay = startLineDisplay + truncation.outputLines - 1
+  if (truncatedLines !== undefined) {
+    const endLineDisplay = startLineDisplay + truncatedLines.length - 1
     const nextOffset = endLineDisplay + 1
-    const byteLimit =
-      truncation.truncatedBy === 'bytes' ? ` (${formatSize(DEFAULT_MAX_BYTES)} limit)` : ''
 
-    content += `\n\n[Showing lines ${startLineDisplay}-${endLineDisplay} of ${lines.length}${byteLimit}. Use offset=${nextOffset} to continue.]`
-    details = { truncation }
+    content += `\n\n[Showing lines ${startLineDisplay}-${endLineDisplay} of ${lines.length}. Use offset=${nextOffset} to continue.]`
   } else if (limit !== undefined && startLine + selectedLines.length < lines.length) {
     const remaining = lines.length - (startLine + selectedLines.length)
     const nextOffset = startLine + selectedLines.length + 1
     content += `\n\n[${remaining} more lines in file. Use offset=${nextOffset} to continue.]`
   }
 
-  return details === undefined ? { content } : { content, details }
+  return { content }
 }
 
-export function createReadTool(workspaceRoot: string): ReadTool {
+export function createReadTool(workspaceRoot: string) {
   return {
-    execute: (input, signal) => readTextFile({ workspaceRoot, ...input }, signal)
+    execute: (input: ReadToolInput, signal?: AbortSignal) =>
+      readTextFile(workspaceRoot, input, signal)
   }
 }
