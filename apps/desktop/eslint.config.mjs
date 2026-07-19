@@ -1,24 +1,24 @@
-import { defineConfig } from 'eslint/config'
-import tseslint from '@electron-toolkit/eslint-config-ts'
-import eslintConfigPrettier from '@electron-toolkit/eslint-config-prettier'
+import eslint from '@eslint/js'
+import eslintConfigPrettier from 'eslint-config-prettier'
+import { defineConfig, globalIgnores } from 'eslint/config'
 import eslintPluginReact from 'eslint-plugin-react'
 import eslintPluginReactHooks from 'eslint-plugin-react-hooks'
 import eslintPluginReactRefresh from 'eslint-plugin-react-refresh'
+import tseslint from 'typescript-eslint'
 
 export default defineConfig(
-  { ignores: ['**/node_modules', '**/dist', '**/out'] },
+  globalIgnores(['**/node_modules/**', '**/dist/**', '**/out/**']),
+  eslint.configs.recommended,
   tseslint.configs.recommended,
-  eslintPluginReact.configs.flat.recommended,
-  eslintPluginReact.configs.flat['jsx-runtime'],
   {
+    files: ['src/renderer/src/**/*.{ts,tsx}'],
+    extends: [
+      eslintPluginReact.configs.flat.recommended,
+      eslintPluginReact.configs.flat['jsx-runtime']
+    ],
     settings: {
-      react: {
-        version: 'detect'
-      }
-    }
-  },
-  {
-    files: ['**/*.{ts,tsx}'],
+      react: { version: 'detect' }
+    },
     plugins: {
       'react-hooks': eslintPluginReactHooks,
       'react-refresh': eslintPluginReactRefresh
