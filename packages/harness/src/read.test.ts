@@ -3,7 +3,7 @@ import { mkdtemp, mkdir, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, it } from 'node:test'
-import { createReadTool, DEFAULT_MAX_BYTES, DEFAULT_MAX_LINES } from './read.ts'
+import { createReadTool } from './read.ts'
 
 async function withWorkspace(
   run: (workspaceRoot: string, sandboxRoot: string) => Promise<void>
@@ -24,10 +24,11 @@ describe('read tool', () => {
     await withWorkspace(async (workspaceRoot) => {
       await writeFile(join(workspaceRoot, 'notes.txt'), 'Hello\nfrom Lefa')
 
-      const result = await createReadTool(workspaceRoot).execute({ path: 'notes.txt' })
+      const result = await createReadTool(workspaceRoot).execute({
+        path: 'notes.txt'
+      })
 
       assert.equal(result.content, 'Hello\nfrom Lefa')
-      assert.equal(result.details, undefined)
     })
   })
 
@@ -35,7 +36,9 @@ describe('read tool', () => {
     await withWorkspace(async (workspaceRoot) => {
       await writeFile(join(workspaceRoot, 'notes.txt'), 'content')
 
-      const result = await createReadTool(workspaceRoot).execute({ path: '@notes.txt' })
+      const result = await createReadTool(workspaceRoot).execute({
+        path: '@notes.txt'
+      })
 
       assert.equal(result.content, 'content')
     })
@@ -61,15 +64,16 @@ describe('read tool', () => {
 
   it("truncates at Pi's default line limit", async () => {
     await withWorkspace(async (workspaceRoot) => {
-      const lines = Array.from({ length: DEFAULT_MAX_LINES + 1 }, (_, index) => `Line ${index + 1}`)
+      const lines = Array.from({ length: 2001 }, (_, index) => `Line ${index + 1}`)
       await writeFile(join(workspaceRoot, 'large.txt'), lines.join('\n'))
 
-      const result = await createReadTool(workspaceRoot).execute({ path: 'large.txt' })
+      const result = await createReadTool(workspaceRoot).execute({
+        path: 'large.txt'
+      })
 
       assert.match(result.content, /Line 2000/)
       assert.doesNotMatch(result.content, /Line 2001/)
       assert.match(result.content, /Use offset=2001 to continue/)
-      assert.equal(result.details?.truncation?.truncatedBy, 'lines')
     })
   })
 
@@ -81,13 +85,24 @@ describe('read tool', () => {
       )
       await writeFile(join(workspaceRoot, 'large.txt'), lines.join('\n'))
 
-      const result = await createReadTool(workspaceRoot).execute({ path: 'large.txt' })
+      const result = await createReadTool(workspaceRoot).execute({
+        path: 'large.txt'
+      })
+      const returnedText = result.content.split('\n\n[')[0] ?? ''
 
-      assert.equal(result.details?.truncation?.truncatedBy, 'bytes')
-      assert.ok(
-        (result.details?.truncation?.outputBytes ?? DEFAULT_MAX_BYTES + 1) <= DEFAULT_MAX_BYTES
+      assert.ok(Buffer.byteLength(returnedText, 'utf8') <= 50 * 1024)
+      assert.match(result.content, /Use offset=\d+ to continue/)
+    })
+  })
+
+  it('rejects a line that exceeds the byte limit', async () => {
+    await withWorkspace(async (workspaceRoot) => {
+      await writeFile(join(workspaceRoot, 'long-line.txt'), 'x'.repeat(50 * 1024 + 1))
+
+      await assert.rejects(
+        createReadTool(workspaceRoot).execute({ path: 'long-line.txt' }),
+        /first requested line exceeds the 50 KB limit/
       )
-      assert.match(result.content, /50\.0KB limit/)
     })
   })
 
