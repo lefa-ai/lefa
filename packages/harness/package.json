@@ -1,5 +1,12 @@
 {
   "type": "module",
   "name": "@lefa/harness",
-  "private": true
+  "private": true,
+  "devDependencies": {
+    "@types/node": "^24.13.3",
+    "typescript": "^6.0.3"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  }
 }
