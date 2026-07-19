@@ -62,6 +62,15 @@ describe('read tool', () => {
     })
   })
 
+  it('validates model input before reading', async () => {
+    await withWorkspace(async (workspaceRoot) => {
+      await assert.rejects(
+        createReadTool(workspaceRoot).execute({ path: 'notes.txt', offset: 0 }),
+        /Too small/
+      )
+    })
+  })
+
   it("truncates at Pi's default line limit", async () => {
     await withWorkspace(async (workspaceRoot) => {
       const lines = Array.from({ length: 2001 }, (_, index) => `Line ${index + 1}`)
