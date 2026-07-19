@@ -1,15 +1,25 @@
 import { constants } from 'node:fs'
 import { access, readFile, realpath } from 'node:fs/promises'
 import { isAbsolute, relative, resolve, sep, win32 } from 'node:path'
+import * as z from 'zod'
+import { defineTool, type Tool } from './tool.ts'
 
 const MAX_LINES = 2000
 const MAX_BYTES = 50 * 1024
 
-interface ReadToolInput {
-  path: string
-  offset?: number
-  limit?: number
+const readInputSchema = z.strictObject({
+  path: z.string().min(1).describe('File path relative to the workspace'),
+  offset: z.number().int().positive().optional().describe('First line to read, starting at 1'),
+  limit: z.number().int().positive().optional().describe('Maximum number of lines to read')
+})
+
+export type ReadInput = z.infer<typeof readInputSchema>
+
+export interface ReadOutput {
+  content: string
 }
+
+export type ReadTool = Tool<typeof readInputSchema, ReadOutput>
 
 function splitLinesForCounting(content: string): string[] {
   if (content.length === 0) return []
@@ -74,22 +84,11 @@ async function resolveWorkspacePath(workspaceRoot: string, filePath: string): Pr
   return canonicalPath
 }
 
-function validateWindow(offset: number | undefined, limit: number | undefined): void {
-  if (offset !== undefined && (!Number.isInteger(offset) || offset < 1)) {
-    throw new Error('Offset must be a positive integer')
-  }
-
-  if (limit !== undefined && (!Number.isInteger(limit) || limit < 1)) {
-    throw new Error('Limit must be a positive integer')
-  }
-}
-
 async function readTextFile(
   workspaceRoot: string,
-  { path, offset, limit }: ReadToolInput,
+  { path, offset, limit }: ReadInput,
   signal?: AbortSignal
-) {
-  validateWindow(offset, limit)
+): Promise<ReadOutput> {
   signal?.throwIfAborted()
 
   const absolutePath = await resolveWorkspacePath(workspaceRoot, path)
@@ -129,9 +128,11 @@ async function readTextFile(
   return { content }
 }
 
-export function createReadTool(workspaceRoot: string) {
-  return {
-    execute: (input: ReadToolInput, signal?: AbortSignal) =>
-      readTextFile(workspaceRoot, input, signal)
-  }
+export function createReadTool(workspaceRoot: string): ReadTool {
+  return defineTool({
+    name: 'read',
+    description: 'Read a UTF-8 text file inside the workspace',
+    inputSchema: readInputSchema,
+    execute: (input, signal) => readTextFile(workspaceRoot, input, signal)
+  })
 }
