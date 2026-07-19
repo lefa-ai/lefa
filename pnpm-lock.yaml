@@ -69,6 +69,8 @@ importers:
         specifier: ^7.2.6
         version: 7.3.6(@types/node@22.20.1)
 
+  packages/harness: {}
+
 packages:
 
   '@babel/code-frame@7.29.7':
