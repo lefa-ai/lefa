@@ -3,7 +3,31 @@ import { mkdtemp, mkdir, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, it } from 'node:test'
-import { createReadTool } from './read.ts'
+import { asSchema } from 'ai'
+import { createReadTool, type ReadInput, type ReadOutput } from './read.ts'
+
+function executeRead(
+  workspaceRoot: string,
+  input: ReadInput,
+  abortSignal?: AbortSignal
+): Promise<ReadOutput> {
+  return execute()
+
+  async function execute(): Promise<ReadOutput> {
+    const output = await createReadTool(workspaceRoot).execute(input, {
+      toolCallId: 'test-read',
+      messages: [],
+      context: {},
+      ...(abortSignal === undefined ? {} : { abortSignal })
+    })
+
+    if (Symbol.asyncIterator in output) {
+      throw new Error('The read tool unexpectedly returned a stream')
+    }
+
+    return output
+  }
+}
 
 async function withWorkspace(
   run: (workspaceRoot: string, sandboxRoot: string) => Promise<void>
@@ -24,7 +48,7 @@ describe('read tool', () => {
     await withWorkspace(async (workspaceRoot) => {
       await writeFile(join(workspaceRoot, 'notes.txt'), 'Hello\nfrom Lefa')
 
-      const result = await createReadTool(workspaceRoot).execute({
+      const result = await executeRead(workspaceRoot, {
         path: 'notes.txt'
       })
 
@@ -36,7 +60,7 @@ describe('read tool', () => {
     await withWorkspace(async (workspaceRoot) => {
       await writeFile(join(workspaceRoot, 'notes.txt'), 'content')
 
-      const result = await createReadTool(workspaceRoot).execute({
+      const result = await executeRead(workspaceRoot, {
         path: '@notes.txt'
       })
 
@@ -49,7 +73,7 @@ describe('read tool', () => {
       const lines = Array.from({ length: 10 }, (_, index) => `Line ${index + 1}`)
       await writeFile(join(workspaceRoot, 'lines.txt'), lines.join('\n'))
 
-      const result = await createReadTool(workspaceRoot).execute({
+      const result = await executeRead(workspaceRoot, {
         path: 'lines.txt',
         offset: 4,
         limit: 3
@@ -62,13 +86,23 @@ describe('read tool', () => {
     })
   })
 
-  it('validates model input before reading', async () => {
-    await withWorkspace(async (workspaceRoot) => {
-      await assert.rejects(
-        createReadTool(workspaceRoot).execute({ path: 'notes.txt', offset: 0 }),
-        /Too small/
-      )
+  it('defines the model input and text output', async () => {
+    const read = createReadTool('.')
+    const validation = await asSchema(read.inputSchema).validate?.({
+      path: 'notes.txt',
+      offset: 0
     })
+
+    assert.equal(validation?.success, false)
+    assert.ok(read.toModelOutput)
+    assert.deepEqual(
+      await read.toModelOutput({
+        toolCallId: 'test-read',
+        input: { path: 'notes.txt' },
+        output: { content: 'Hello' }
+      }),
+      { type: 'text', value: 'Hello' }
+    )
   })
 
   it("truncates at Pi's default line limit", async () => {
@@ -76,7 +110,7 @@ describe('read tool', () => {
       const lines = Array.from({ length: 2001 }, (_, index) => `Line ${index + 1}`)
       await writeFile(join(workspaceRoot, 'large.txt'), lines.join('\n'))
 
-      const result = await createReadTool(workspaceRoot).execute({
+      const result = await executeRead(workspaceRoot, {
         path: 'large.txt'
       })
 
@@ -94,7 +128,7 @@ describe('read tool', () => {
       )
       await writeFile(join(workspaceRoot, 'large.txt'), lines.join('\n'))
 
-      const result = await createReadTool(workspaceRoot).execute({
+      const result = await executeRead(workspaceRoot, {
         path: 'large.txt'
       })
       const returnedText = result.content.split('\n\n[')[0] ?? ''
@@ -109,7 +143,7 @@ describe('read tool', () => {
       await writeFile(join(workspaceRoot, 'long-line.txt'), 'x'.repeat(50 * 1024 + 1))
 
       await assert.rejects(
-        createReadTool(workspaceRoot).execute({ path: 'long-line.txt' }),
+        executeRead(workspaceRoot, { path: 'long-line.txt' }),
         /first requested line exceeds the 50 KB limit/
       )
     })
@@ -120,7 +154,7 @@ describe('read tool', () => {
       await writeFile(join(workspaceRoot, 'short.txt'), 'Line 1\nLine 2')
 
       await assert.rejects(
-        createReadTool(workspaceRoot).execute({ path: 'short.txt', offset: 3 }),
+        executeRead(workspaceRoot, { path: 'short.txt', offset: 3 }),
         /Offset 3 is beyond end of file \(2 lines total\)/
       )
     })
@@ -132,7 +166,7 @@ describe('read tool', () => {
       await writeFile(outsidePath, 'outside')
 
       await assert.rejects(
-        createReadTool(workspaceRoot).execute({ path: outsidePath }),
+        executeRead(workspaceRoot, { path: outsidePath }),
         /relative to the workspace/
       )
     })
@@ -143,7 +177,7 @@ describe('read tool', () => {
       await writeFile(join(sandboxRoot, 'outside.txt'), 'outside')
 
       await assert.rejects(
-        createReadTool(workspaceRoot).execute({ path: '../outside.txt' }),
+        executeRead(workspaceRoot, { path: '../outside.txt' }),
         /must not traverse outside the workspace/
       )
     })
@@ -156,7 +190,7 @@ describe('read tool', () => {
       await symlink(outsidePath, join(workspaceRoot, 'linked.txt'))
 
       await assert.rejects(
-        createReadTool(workspaceRoot).execute({ path: 'linked.txt' }),
+        executeRead(workspaceRoot, { path: 'linked.txt' }),
         /resolves outside the workspace/
       )
     })
@@ -168,10 +202,9 @@ describe('read tool', () => {
       const controller = new AbortController()
       controller.abort()
 
-      await assert.rejects(
-        createReadTool(workspaceRoot).execute({ path: 'notes.txt' }, controller.signal),
-        { name: 'AbortError' }
-      )
+      await assert.rejects(executeRead(workspaceRoot, { path: 'notes.txt' }, controller.signal), {
+        name: 'AbortError'
+      })
     })
   })
 })
