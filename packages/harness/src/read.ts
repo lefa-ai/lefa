@@ -11,7 +11,7 @@ const MAX_BYTES = 50 * 1024
 const readInputSchema = z.strictObject({
   path: z.string().min(1).describe('Relative or absolute path'),
   offset: z.int().positive().default(1).describe('First line, starting at 1'),
-  limit: z.int().positive().default(MAX_LINES).describe('Maximum lines')
+  limit: z.int().positive().max(MAX_LINES).default(MAX_LINES).describe('Maximum lines')
 })
 
 export type ReadInput = z.infer<typeof readInputSchema>
@@ -26,39 +26,16 @@ export type ReadTool = Tool<ReadInput, ReadOutput, ReadContext> & {
   execute: ToolExecuteFunction<ReadInput, ReadOutput, ReadContext>
 }
 
-function splitLinesForCounting(content: string): string[] {
-  if (content.length === 0) return []
+function truncateBytes(content: string): string | undefined {
+  const buffer = Buffer.from(content)
+  if (buffer.length <= MAX_BYTES) return undefined
 
-  const lines = content.split('\n')
-  if (content.endsWith('\n')) lines.pop()
-  return lines
-}
-
-function truncateHead(content: string): string[] | undefined {
-  const lines = splitLinesForCounting(content)
-
-  if (lines.length <= MAX_LINES && Buffer.byteLength(content, 'utf8') <= MAX_BYTES) {
-    return undefined
-  }
-
-  if (Buffer.byteLength(lines[0] ?? '', 'utf8') > MAX_BYTES) {
+  const lastNewline = buffer.lastIndexOf('\n', MAX_BYTES)
+  if (lastNewline === -1) {
     throw new Error('The first requested line exceeds the 50 KB limit')
   }
 
-  const output: string[] = []
-  let outputBytes = 0
-
-  for (let index = 0; index < lines.length && index < MAX_LINES; index += 1) {
-    const line = lines[index] ?? ''
-    const lineBytes = Buffer.byteLength(line, 'utf8') + (index > 0 ? 1 : 0)
-
-    if (outputBytes + lineBytes > MAX_BYTES) break
-
-    output.push(line)
-    outputBytes += lineBytes
-  }
-
-  return output
+  return buffer.subarray(0, lastNewline).toString('utf8')
 }
 
 function resolveReadPath(cwd: string, filePath: string): string {
@@ -91,13 +68,14 @@ async function readTextFile(
   }
 
   const selectedLines = lines.slice(startLine, startLine + limit)
-  const selectedContent = selectedLines.join('\n')
-  const truncatedLines = truncateHead(selectedContent)
   const startLineDisplay = startLine + 1
-  let content = truncatedLines?.join('\n') ?? selectedContent
+  let content = selectedLines.join('\n')
+  const truncatedContent = truncateBytes(content)
 
-  if (truncatedLines !== undefined) {
-    const endLineDisplay = startLineDisplay + truncatedLines.length - 1
+  if (truncatedContent !== undefined) {
+    content = truncatedContent
+    const returnedLines = content.split('\n').length
+    const endLineDisplay = startLineDisplay + returnedLines - 1
     const nextOffset = endLineDisplay + 1
 
     content += `\n\n[Showing lines ${startLineDisplay}-${endLineDisplay} of ${lines.length}. Use offset=${nextOffset} to continue.]`
