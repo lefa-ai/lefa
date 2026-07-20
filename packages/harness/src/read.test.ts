@@ -109,14 +109,14 @@ describe('read tool', () => {
 
     assert.deepEqual(validation, {
       success: true,
-      value: { path: 'notes.txt', offset: 1 }
+      value: { path: 'notes.txt', offset: 1, limit: 2000 }
     })
     assert.equal(invalidValidation?.success, false)
     assert.ok(read.toModelOutput)
     assert.deepEqual(
       await read.toModelOutput({
         toolCallId: 'test-read',
-        input: { path: 'notes.txt', offset: 1 },
+        input: { path: 'notes.txt', offset: 1, limit: 2000 },
         output: { content: 'Hello' }
       }),
       { type: 'text', value: 'Hello' }
