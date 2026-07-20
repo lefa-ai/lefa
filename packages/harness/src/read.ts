@@ -1,6 +1,7 @@
 import { constants } from 'node:fs'
-import { access, readFile, realpath } from 'node:fs/promises'
-import { isAbsolute, relative, resolve, sep, win32 } from 'node:path'
+import { access, readFile } from 'node:fs/promises'
+import { homedir } from 'node:os'
+import { resolve } from 'node:path'
 import { tool, type Tool, type ToolExecuteFunction } from 'ai'
 import * as z from 'zod'
 
@@ -8,7 +9,7 @@ const MAX_LINES = 2000
 const MAX_BYTES = 50 * 1024
 
 const readInputSchema = z.strictObject({
-  path: z.string().min(1).describe('Workspace-relative path'),
+  path: z.string().min(1).describe('Relative or absolute path'),
   offset: z.int().positive().default(1).describe('First line, starting at 1'),
   limit: z.int().positive().default(MAX_LINES).describe('Maximum lines')
 })
@@ -60,40 +61,25 @@ function truncateHead(content: string): string[] | undefined {
   return output
 }
 
-function normalizePath(filePath: string): string {
+function resolveReadPath(cwd: string, filePath: string): string {
   const normalized = filePath.startsWith('@') ? filePath.slice(1) : filePath
 
   if (normalized.length === 0) throw new Error('Path must not be empty')
 
-  if (isAbsolute(normalized) || win32.isAbsolute(normalized)) {
-    throw new Error(`Path must be relative to the workspace: ${filePath}`)
+  if (normalized === '~') return homedir()
+  if (normalized.startsWith('~/') || normalized.startsWith('~\\')) {
+    return resolve(homedir(), normalized.slice(2))
   }
 
-  if (normalized.split(/[\\/]+/).includes('..')) {
-    throw new Error(`Path must not traverse outside the workspace: ${filePath}`)
-  }
-
-  return normalized
-}
-
-async function resolveWorkspacePath(workspaceRoot: string, filePath: string): Promise<string> {
-  const canonicalRoot = await realpath(workspaceRoot)
-  const canonicalPath = await realpath(resolve(canonicalRoot, normalizePath(filePath)))
-  const relativePath = relative(canonicalRoot, canonicalPath)
-
-  if (relativePath === '..' || relativePath.startsWith(`..${sep}`) || isAbsolute(relativePath)) {
-    throw new Error(`Path resolves outside the workspace: ${filePath}`)
-  }
-
-  return canonicalPath
+  return resolve(cwd, normalized)
 }
 
 async function readTextFile(
-  workspaceRoot: string,
+  cwd: string,
   { path, offset, limit }: ReadInput,
   signal?: AbortSignal
 ): Promise<ReadOutput> {
-  const absolutePath = await resolveWorkspacePath(workspaceRoot, path)
+  const absolutePath = resolveReadPath(cwd, path)
   await access(absolutePath, constants.R_OK)
   const text = await readFile(absolutePath, { encoding: 'utf8', signal })
 
@@ -124,13 +110,13 @@ async function readTextFile(
   return { content }
 }
 
-export function createReadTool(workspaceRoot: string): ReadTool {
+export function createReadTool(cwd: string): ReadTool {
   return tool({
     description:
-      'Read a UTF-8 text file inside the workspace. Paths must be relative. Output is limited to 2,000 lines or 50 KB; use offset and limit to continue reading large files.',
+      'Read a UTF-8 text file. Paths may be relative to the current working directory or absolute. Output is limited to 2,000 lines or 50 KB; use offset and limit to continue reading large files.',
     inputSchema: readInputSchema,
     strict: true,
-    execute: (input, { abortSignal }) => readTextFile(workspaceRoot, input, abortSignal),
+    execute: (input, { abortSignal }) => readTextFile(cwd, input, abortSignal),
     toModelOutput: ({ output }) => ({ type: 'text', value: output.content })
   })
 }
