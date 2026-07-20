@@ -102,16 +102,21 @@ describe('read tool', () => {
     const read = createReadTool('.')
     const schema = asSchema(read.inputSchema)
     const validation = await schema.validate?.({ path: 'notes.txt' })
-    const invalidValidation = await schema.validate?.({
+    const invalidOffset = await schema.validate?.({
       path: 'notes.txt',
       offset: 0
+    })
+    const invalidLimit = await schema.validate?.({
+      path: 'notes.txt',
+      limit: 2001
     })
 
     assert.deepEqual(validation, {
       success: true,
       value: { path: 'notes.txt', offset: 1, limit: 2000 }
     })
-    assert.equal(invalidValidation?.success, false)
+    assert.equal(invalidOffset?.success, false)
+    assert.equal(invalidLimit?.success, false)
     assert.ok(read.toModelOutput)
     assert.deepEqual(
       await read.toModelOutput({
