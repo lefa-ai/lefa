@@ -61,6 +61,7 @@ async function readTextFile(
   const text = await readFile(absolutePath, { encoding: 'utf8', signal })
 
   const lines = text.split('\n')
+  if (text.endsWith('\n')) lines.pop()
   const startLine = offset - 1
 
   if (startLine >= lines.length) {
