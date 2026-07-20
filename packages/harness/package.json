@@ -7,6 +7,11 @@
     "typescript": "^6.0.3"
   },
   "scripts": {
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "node --test"
+  },
+  "dependencies": {
+    "ai": "^7.0.31",
+    "zod": "^4.4.3"
   }
 }
