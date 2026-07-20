@@ -10,7 +10,7 @@ const MAX_BYTES = 50 * 1024
 const readInputSchema = z.strictObject({
   path: z.string().min(1).describe('Workspace-relative path'),
   offset: z.int().positive().default(1).describe('First line, starting at 1'),
-  limit: z.int().positive().optional().describe('Maximum lines')
+  limit: z.int().positive().default(MAX_LINES).describe('Maximum lines')
 })
 
 export type ReadInput = z.infer<typeof readInputSchema>
@@ -111,8 +111,7 @@ async function readTextFile(
     throw new Error(`Offset ${offset} is beyond end of file (${lines.length} lines total)`)
   }
 
-  const selectedLines =
-    limit === undefined ? lines.slice(startLine) : lines.slice(startLine, startLine + limit)
+  const selectedLines = lines.slice(startLine, startLine + limit)
   const selectedContent = selectedLines.join('\n')
   const truncatedLines = truncateHead(selectedContent)
   const startLineDisplay = startLine + 1
@@ -123,7 +122,7 @@ async function readTextFile(
     const nextOffset = endLineDisplay + 1
 
     content += `\n\n[Showing lines ${startLineDisplay}-${endLineDisplay} of ${lines.length}. Use offset=${nextOffset} to continue.]`
-  } else if (limit !== undefined && startLine + selectedLines.length < lines.length) {
+  } else if (startLine + selectedLines.length < lines.length) {
     const remaining = lines.length - (startLine + selectedLines.length)
     const nextOffset = startLine + selectedLines.length + 1
     content += `\n\n[${remaining} more lines in file. Use offset=${nextOffset} to continue.]`
