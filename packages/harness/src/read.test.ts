@@ -4,17 +4,29 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, it } from 'node:test'
 import { asSchema } from 'ai'
-import { createReadTool, type ReadInput, type ReadOutput } from './read.ts'
+import { createReadTool, type ReadOutput } from './read.ts'
+
+interface RawReadInput {
+  path: string
+  offset?: number
+  limit?: number
+}
 
 function executeRead(
   workspaceRoot: string,
-  input: ReadInput,
+  input: RawReadInput,
   abortSignal?: AbortSignal
 ): Promise<ReadOutput> {
   return execute()
 
   async function execute(): Promise<ReadOutput> {
-    const output = await createReadTool(workspaceRoot).execute(input, {
+    const read = createReadTool(workspaceRoot)
+    const validation = await asSchema(read.inputSchema).validate?.(input)
+
+    if (validation === undefined) throw new Error('The read tool has no input validator')
+    if (!validation.success) throw validation.error
+
+    const output = await read.execute(validation.value, {
       toolCallId: 'test-read',
       messages: [],
       context: {},
@@ -88,17 +100,23 @@ describe('read tool', () => {
 
   it('defines the model input and text output', async () => {
     const read = createReadTool('.')
-    const validation = await asSchema(read.inputSchema).validate?.({
+    const schema = asSchema(read.inputSchema)
+    const validation = await schema.validate?.({ path: 'notes.txt' })
+    const invalidValidation = await schema.validate?.({
       path: 'notes.txt',
       offset: 0
     })
 
-    assert.equal(validation?.success, false)
+    assert.deepEqual(validation, {
+      success: true,
+      value: { path: 'notes.txt', offset: 1 }
+    })
+    assert.equal(invalidValidation?.success, false)
     assert.ok(read.toModelOutput)
     assert.deepEqual(
       await read.toModelOutput({
         toolCallId: 'test-read',
-        input: { path: 'notes.txt' },
+        input: { path: 'notes.txt', offset: 1 },
         output: { content: 'Hello' }
       }),
       { type: 'text', value: 'Hello' }
