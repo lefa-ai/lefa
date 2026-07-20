@@ -8,9 +8,9 @@ const MAX_LINES = 2000
 const MAX_BYTES = 50 * 1024
 
 const readInputSchema = z.strictObject({
-  path: z.string().min(1).describe('File path relative to the workspace'),
-  offset: z.number().int().positive().optional().describe('First line to read, starting at 1'),
-  limit: z.number().int().positive().optional().describe('Maximum number of lines to read')
+  path: z.string().min(1).describe('Workspace-relative path'),
+  offset: z.int().positive().default(1).describe('First line, starting at 1'),
+  limit: z.int().positive().optional().describe('Maximum lines')
 })
 
 export type ReadInput = z.infer<typeof readInputSchema>
@@ -105,7 +105,7 @@ async function readTextFile(
   signal?.throwIfAborted()
 
   const lines = text.split('\n')
-  const startLine = offset === undefined ? 0 : offset - 1
+  const startLine = offset - 1
 
   if (startLine >= lines.length) {
     throw new Error(`Offset ${offset} is beyond end of file (${lines.length} lines total)`)
