@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { mkdtemp, mkdir, rm, symlink, writeFile } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { homedir, tmpdir } from 'node:os'
+import { basename, join } from 'node:path'
 import { describe, it } from 'node:test'
 import { asSchema } from 'ai'
 import { createReadTool, type ReadOutput } from './read.ts'
@@ -13,14 +13,14 @@ interface RawReadInput {
 }
 
 function executeRead(
-  workspaceRoot: string,
+  cwd: string,
   input: RawReadInput,
   abortSignal?: AbortSignal
 ): Promise<ReadOutput> {
   return execute()
 
   async function execute(): Promise<ReadOutput> {
-    const read = createReadTool(workspaceRoot)
+    const read = createReadTool(cwd)
     const validation = await asSchema(read.inputSchema).validate?.(input)
 
     if (validation === undefined) throw new Error('The read tool has no input validator')
@@ -56,11 +56,11 @@ async function withWorkspace(
 }
 
 describe('read tool', () => {
-  it('reads a text file relative to the workspace', async () => {
-    await withWorkspace(async (workspaceRoot) => {
-      await writeFile(join(workspaceRoot, 'notes.txt'), 'Hello\nfrom Lefa')
+  it('reads a text file relative to the current working directory', async () => {
+    await withWorkspace(async (cwd) => {
+      await writeFile(join(cwd, 'notes.txt'), 'Hello\nfrom Lefa')
 
-      const result = await executeRead(workspaceRoot, {
+      const result = await executeRead(cwd, {
         path: 'notes.txt'
       })
 
@@ -178,40 +178,53 @@ describe('read tool', () => {
     })
   })
 
-  it('rejects absolute paths', async () => {
-    await withWorkspace(async (workspaceRoot, sandboxRoot) => {
+  it('reads absolute paths', async () => {
+    await withWorkspace(async (cwd, sandboxRoot) => {
       const outsidePath = join(sandboxRoot, 'outside.txt')
       await writeFile(outsidePath, 'outside')
 
-      await assert.rejects(
-        executeRead(workspaceRoot, { path: outsidePath }),
-        /relative to the workspace/
-      )
+      const result = await executeRead(cwd, { path: outsidePath })
+
+      assert.equal(result.content, 'outside')
     })
   })
 
-  it('rejects parent traversal', async () => {
-    await withWorkspace(async (workspaceRoot, sandboxRoot) => {
+  it('reads paths outside the current working directory', async () => {
+    await withWorkspace(async (cwd, sandboxRoot) => {
       await writeFile(join(sandboxRoot, 'outside.txt'), 'outside')
 
-      await assert.rejects(
-        executeRead(workspaceRoot, { path: '../outside.txt' }),
-        /must not traverse outside the workspace/
-      )
+      const result = await executeRead(cwd, { path: '../outside.txt' })
+
+      assert.equal(result.content, 'outside')
     })
   })
 
-  it('rejects symlinks that resolve outside the workspace', async () => {
-    await withWorkspace(async (workspaceRoot, sandboxRoot) => {
+  it('follows symlinks outside the current working directory', async () => {
+    await withWorkspace(async (cwd, sandboxRoot) => {
       const outsidePath = join(sandboxRoot, 'outside.txt')
       await writeFile(outsidePath, 'outside')
-      await symlink(outsidePath, join(workspaceRoot, 'linked.txt'))
+      await symlink(outsidePath, join(cwd, 'linked.txt'))
 
-      await assert.rejects(
-        executeRead(workspaceRoot, { path: 'linked.txt' }),
-        /resolves outside the workspace/
-      )
+      const result = await executeRead(cwd, { path: 'linked.txt' })
+
+      assert.equal(result.content, 'outside')
     })
+  })
+
+  it('expands home-relative paths', async () => {
+    const sandboxRoot = await mkdtemp(join(homedir(), 'lefa-read-'))
+
+    try {
+      await writeFile(join(sandboxRoot, 'notes.txt'), 'from home')
+
+      const result = await executeRead(tmpdir(), {
+        path: `~/${basename(sandboxRoot)}/notes.txt`
+      })
+
+      assert.equal(result.content, 'from home')
+    } finally {
+      await rm(sandboxRoot, { recursive: true, force: true })
+    }
   })
 
   it('honors an already-aborted signal', async () => {
