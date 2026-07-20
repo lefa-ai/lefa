@@ -98,6 +98,19 @@ describe('read tool', () => {
     })
   })
 
+  it('does not count a trailing newline as an extra line', async () => {
+    await withWorkspace(async (workspaceRoot) => {
+      await writeFile(join(workspaceRoot, 'lines.txt'), 'Line 1\nLine 2\n')
+
+      const result = await executeRead(workspaceRoot, {
+        path: 'lines.txt',
+        limit: 2
+      })
+
+      assert.equal(result.content, 'Line 1\nLine 2')
+    })
+  })
+
   it('defines the model input and text output', async () => {
     const read = createReadTool('.')
     const schema = asSchema(read.inputSchema)
