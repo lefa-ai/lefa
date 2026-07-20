@@ -1,8 +1,8 @@
 import { constants } from 'node:fs'
 import { access, readFile, realpath } from 'node:fs/promises'
 import { isAbsolute, relative, resolve, sep, win32 } from 'node:path'
+import { tool, type Tool, type ToolExecuteFunction } from 'ai'
 import * as z from 'zod'
-import { defineTool, type Tool } from './tool.ts'
 
 const MAX_LINES = 2000
 const MAX_BYTES = 50 * 1024
@@ -19,7 +19,11 @@ export interface ReadOutput {
   content: string
 }
 
-export type ReadTool = Tool<typeof readInputSchema, ReadOutput>
+type ReadContext = Record<string, unknown>
+
+export type ReadTool = Tool<ReadInput, ReadOutput, ReadContext> & {
+  execute: ToolExecuteFunction<ReadInput, ReadOutput, ReadContext>
+}
 
 function splitLinesForCounting(content: string): string[] {
   if (content.length === 0) return []
@@ -129,10 +133,12 @@ async function readTextFile(
 }
 
 export function createReadTool(workspaceRoot: string): ReadTool {
-  return defineTool({
-    name: 'read',
-    description: 'Read a UTF-8 text file inside the workspace',
+  return tool({
+    description:
+      'Read a UTF-8 text file inside the workspace. Paths must be relative. Output is limited to 2,000 lines or 50 KB; use offset and limit to continue reading large files.',
     inputSchema: readInputSchema,
-    execute: (input, signal) => readTextFile(workspaceRoot, input, signal)
+    strict: true,
+    execute: (input, { abortSignal }) => readTextFile(workspaceRoot, input, abortSignal),
+    toModelOutput: ({ output }) => ({ type: 'text', value: output.content })
   })
 }
