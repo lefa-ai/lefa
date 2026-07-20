@@ -7,8 +7,8 @@ export interface HarnessTools extends ToolSet {
   read: ReadTool
 }
 
-export function createTools(workspaceRoot: string): HarnessTools {
+export function createTools(cwd: string): HarnessTools {
   return {
-    read: createReadTool(workspaceRoot)
+    read: createReadTool(cwd)
   }
 }
