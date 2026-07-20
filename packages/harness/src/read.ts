@@ -93,16 +93,9 @@ async function readTextFile(
   { path, offset, limit }: ReadInput,
   signal?: AbortSignal
 ): Promise<ReadOutput> {
-  signal?.throwIfAborted()
-
   const absolutePath = await resolveWorkspacePath(workspaceRoot, path)
-  signal?.throwIfAborted()
-
   await access(absolutePath, constants.R_OK)
-  signal?.throwIfAborted()
-
-  const text = (await readFile(absolutePath, { signal })).toString('utf8')
-  signal?.throwIfAborted()
+  const text = await readFile(absolutePath, { encoding: 'utf8', signal })
 
   const lines = text.split('\n')
   const startLine = offset - 1
