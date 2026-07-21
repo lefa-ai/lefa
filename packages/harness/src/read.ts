@@ -1,9 +1,8 @@
 import { constants } from 'node:fs'
 import { access, readFile } from 'node:fs/promises'
-import { homedir } from 'node:os'
-import { resolve } from 'node:path'
 import { tool, type Tool, type ToolExecuteFunction } from 'ai'
 import * as z from 'zod'
+import { resolvePath } from './path.ts'
 
 const MAX_LINES = 2000
 const MAX_BYTES = 50 * 1024
@@ -38,25 +37,12 @@ function truncateBytes(content: string): string | undefined {
   return buffer.subarray(0, lastNewline).toString('utf8')
 }
 
-function resolveReadPath(cwd: string, filePath: string): string {
-  const normalized = filePath.startsWith('@') ? filePath.slice(1) : filePath
-
-  if (normalized.length === 0) throw new Error('Path must not be empty')
-
-  if (normalized === '~') return homedir()
-  if (normalized.startsWith('~/') || normalized.startsWith('~\\')) {
-    return resolve(homedir(), normalized.slice(2))
-  }
-
-  return resolve(cwd, normalized)
-}
-
 async function readTextFile(
   cwd: string,
   { path, offset, limit }: ReadInput,
   signal?: AbortSignal
 ): Promise<ReadOutput> {
-  const absolutePath = resolveReadPath(cwd, path)
+  const absolutePath = resolvePath(cwd, path)
   await access(absolutePath, constants.R_OK)
   const text = await readFile(absolutePath, { encoding: 'utf8', signal })
 
