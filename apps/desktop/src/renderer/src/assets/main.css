@@ -61,6 +61,36 @@ button:disabled {
   opacity: 0.6;
 }
 
+form {
+  display: flex;
+  width: 100%;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+textarea {
+  min-height: 8rem;
+  resize: vertical;
+  padding: 0.75rem;
+  border: 1px solid #27272a;
+  border-radius: 0.5rem;
+  color: #fafafa;
+  background: #18181b;
+  font: inherit;
+}
+
+pre {
+  width: 100%;
+  max-height: 20rem;
+  margin: 0;
+  overflow: auto;
+  padding: 1rem;
+  border: 1px solid #27272a;
+  border-radius: 0.5rem;
+  background: #18181b;
+  white-space: pre-wrap;
+}
+
 code,
 p {
   margin: 0;
