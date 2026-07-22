@@ -1,8 +1,16 @@
 import { app, BrowserWindow, dialog, ipcMain } from 'electron'
 import { join } from 'node:path'
-import { workspaceChannel } from '../shared/api'
+import { agentPromptChannel, workspaceChannel, type AgentPromptInput } from '../shared/api'
+import { createWorkspaceAgent } from './agent'
 
 function registerIpcHandlers(): void {
+  ipcMain.handle(agentPromptChannel, async (_event, input: AgentPromptInput) => {
+    const agent = createWorkspaceAgent(input.cwd)
+    const result = await agent.generate({ prompt: input.prompt })
+
+    return result.text
+  })
+
   ipcMain.handle(workspaceChannel, async (event) => {
     const window = BrowserWindow.fromWebContents(event.sender)
 
