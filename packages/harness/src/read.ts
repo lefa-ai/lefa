@@ -9,8 +9,8 @@ const MAX_BYTES = 50 * 1024
 
 const readInputSchema = z.strictObject({
   path: z.string().min(1).describe('Relative or absolute path'),
-  offset: z.int().positive().default(1).describe('First line, starting at 1'),
-  limit: z.int().positive().max(MAX_LINES).default(MAX_LINES).describe('Maximum lines')
+  offset: z.number().default(1).describe('First line, starting at 1'),
+  limit: z.number().default(MAX_LINES).describe('Maximum lines')
 })
 
 export type ReadInput = z.infer<typeof readInputSchema>

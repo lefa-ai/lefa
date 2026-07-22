@@ -2,6 +2,7 @@
   "type": "module",
   "name": "@lefa/harness",
   "private": true,
+  "exports": "./src/index.ts",
   "devDependencies": {
     "@types/node": "^24.13.3",
     "typescript": "^6.0.3"
@@ -11,7 +12,7 @@
     "test": "node --test"
   },
   "dependencies": {
-    "ai": "^7.0.31",
+    "ai": "^7.0.34",
     "zod": "^4.4.3"
   }
 }

@@ -5,6 +5,7 @@
     "strict": true,
     "module": "ESNext",
     "moduleResolution": "Bundler",
+    "allowImportingTsExtensions": true,
     "target": "ESNext",
     "skipLibCheck": true,
     "types": ["electron-vite/node"]

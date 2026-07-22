@@ -1,6 +1,9 @@
 packages:
   - apps/*
   - packages/*
+minimumReleaseAgeExclude:
+  - ai
+  - '@ai-sdk/*'
 allowBuilds:
   electron: true
   esbuild: true
