@@ -1,4 +1,7 @@
 import { exec } from 'node:child_process'
+import { mkdtemp, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { promisify } from 'node:util'
 import { tool, type Tool, type ToolExecuteFunction } from 'ai'
 import * as z from 'zod'
@@ -27,11 +30,16 @@ async function executeBash(cwd: string, { command }: BashInput): Promise<BashOut
     cwd,
     shell: process.env.SHELL
   })
-  let content = `${stdout}${stderr}`.trimEnd()
+  const output = `${stdout}${stderr}`
+  let content = output.trimEnd()
   const truncatedContent = truncateTail(content)
 
   if (truncatedContent !== undefined) {
-    content = `${truncatedContent}\n\n[Output truncated to the last ${MAX_LINES} lines or ${MAX_BYTES / 1024} KB.]`
+    const directory = await mkdtemp(join(tmpdir(), 'lefa-bash-'))
+    const outputPath = join(directory, 'output.log')
+    await writeFile(outputPath, output)
+
+    content = `${truncatedContent}\n\n[Output truncated to the last ${MAX_LINES} lines or ${MAX_BYTES / 1024} KB. Full output: ${outputPath}]`
   }
 
   return { content: content || '(no output)' }
@@ -40,7 +48,7 @@ async function executeBash(cwd: string, { command }: BashInput): Promise<BashOut
 export function createBashTool(cwd: string): BashTool {
   return tool({
     description:
-      'Execute a bash command in the current working directory. Returns stdout and stderr, limited to the last 2,000 lines or 50 KB.',
+      'Execute a bash command in the current working directory. Returns stdout and stderr, limited to the last 2,000 lines or 50 KB. If truncated, full output is saved to a temporary file.',
     inputSchema: bashInputSchema,
     strict: true,
     execute: (input) => executeBash(cwd, input),
