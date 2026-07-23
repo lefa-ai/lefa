@@ -2,6 +2,8 @@ export const MAX_LINES = 2000
 export const MAX_BYTES = 50 * 1024
 
 export function splitLines(content: string): string[] {
+  if (!content) return []
+
   const lines = content.split('\n')
   if (content.endsWith('\n')) lines.pop()
 
@@ -42,11 +44,10 @@ export function truncateTail(content: string): string | undefined {
     const lineBytes = Buffer.byteLength(line) + (output.length ? 1 : 0)
 
     if (outputBytes + lineBytes > MAX_BYTES) {
-      const availableBytes = MAX_BYTES - outputBytes - (output.length ? 1 : 0)
-
-      if (availableBytes > 0) {
+      if (!output.length) {
         const buffer = Buffer.from(line)
-        let start = buffer.length - availableBytes
+        let start = buffer.length - MAX_BYTES
+
         while ((buffer[start] as number) >> 6 === 2) start++
         output.unshift(buffer.subarray(start).toString())
       }
