@@ -3,9 +3,7 @@ import { access, readFile } from 'node:fs/promises'
 import { tool, type Tool, type ToolExecuteFunction } from 'ai'
 import * as z from 'zod'
 import { resolvePath } from './path.ts'
-
-const MAX_LINES = 2000
-const MAX_BYTES = 50 * 1024
+import { MAX_LINES, splitLines, truncateHead } from './truncate.ts'
 
 const readInputSchema = z.strictObject({
   path: z.string().min(1).describe('Relative or absolute path'),
@@ -25,18 +23,6 @@ export type ReadTool = Tool<ReadInput, ReadOutput, ReadContext> & {
   execute: ToolExecuteFunction<ReadInput, ReadOutput, ReadContext>
 }
 
-function truncateBytes(content: string): string | undefined {
-  const buffer = Buffer.from(content)
-  if (buffer.length <= MAX_BYTES) return undefined
-
-  const lastNewline = buffer.lastIndexOf('\n', MAX_BYTES)
-  if (lastNewline === -1) {
-    throw new Error('The first requested line exceeds the 50 KB limit')
-  }
-
-  return buffer.subarray(0, lastNewline).toString('utf8')
-}
-
 async function readTextFile(
   cwd: string,
   { path, offset, limit }: ReadInput,
@@ -46,18 +32,17 @@ async function readTextFile(
   await access(absolutePath, constants.R_OK)
   const text = await readFile(absolutePath, { encoding: 'utf8', signal })
 
-  const lines = text.split('\n')
-  if (text.endsWith('\n')) lines.pop()
+  const lines = splitLines(text)
   const startLine = offset - 1
 
   if (startLine >= lines.length) {
     throw new Error(`Offset ${offset} is beyond end of file (${lines.length} lines total)`)
   }
 
-  const selectedLines = lines.slice(startLine, startLine + limit)
+  const selectedLines = lines.slice(startLine, startLine + Math.min(limit, MAX_LINES))
   const startLineDisplay = startLine + 1
   let content = selectedLines.join('\n')
-  const truncatedContent = truncateBytes(content)
+  const truncatedContent = truncateHead(content)
 
   if (truncatedContent !== undefined) {
     content = truncatedContent
