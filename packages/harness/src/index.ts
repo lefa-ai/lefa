@@ -1,10 +1,9 @@
-import { closeSync, constants, fstatSync, openSync, readSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { ToolLoopAgent, type LanguageModel, type ToolSet } from 'ai'
 import { createBashTool, type BashTool } from './bash.ts'
 import { createEditTool, type EditTool } from './edit.ts'
 import { createReadTool, type ReadTool } from './read.ts'
-import { MAX_BYTES } from './truncate.ts'
 import { createWriteTool, type WriteTool } from './write.ts'
 
 export { createBashTool, type BashInput, type BashOutput, type BashTool } from './bash.ts'
@@ -28,33 +27,11 @@ export function createTools(cwd: string): HarnessTools {
   }
 }
 
-function readProjectInstructions(cwd: string): string {
-  let file: number
-
-  try {
-    file = openSync(join(cwd, 'AGENTS.md'), constants.O_RDONLY | constants.O_NOFOLLOW)
-  } catch (error) {
-    const code = (error as NodeJS.ErrnoException).code
-    if (code === 'ENOENT' || code === 'ELOOP') return ''
-    throw error
-  }
-
-  try {
-    const stats = fstatSync(file)
-    if (!stats.isFile()) return ''
-
-    const content = Buffer.alloc(MAX_BYTES + 1)
-    const bytesRead = readSync(file, content, 0, content.length, 0)
-    if (bytesRead > MAX_BYTES) throw new Error('AGENTS.md exceeds the 50 KB limit')
-
-    return content.subarray(0, bytesRead).toString().trim()
-  } finally {
-    closeSync(file)
-  }
-}
-
 export function createAgent(model: LanguageModel, cwd: string) {
-  const projectInstructions = readProjectInstructions(cwd)
+  const projectInstructionsPath = join(cwd, 'AGENTS.md')
+  const projectInstructions = existsSync(projectInstructionsPath)
+    ? readFileSync(projectInstructionsPath, 'utf8').trim()
+    : ''
   const projectContext = projectInstructions
     ? `\n\n## Project Instructions\n\n${projectInstructions}`
     : ''
