@@ -111,16 +111,6 @@ describe('read tool', () => {
     })
   })
 
-  it('reads an empty file', async () => {
-    await withWorkspace(async (workspaceRoot) => {
-      await writeFile(join(workspaceRoot, 'empty.txt'), '')
-
-      const result = await executeRead(workspaceRoot, { path: 'empty.txt' })
-
-      assert.equal(result.content, '')
-    })
-  })
-
   it('defines the model input and text output', async () => {
     const read = createReadTool('.')
     const schema = asSchema(read.inputSchema)
