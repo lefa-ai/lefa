@@ -27,6 +27,17 @@ export function createTools(cwd: string): HarnessTools {
 
 export function createAgent(model: LanguageModel, cwd: string) {
   return new ToolLoopAgent<never, HarnessTools, never>({
+    instructions: `You are an expert coding assistant operating inside Lefa, a coding agent harness. You help users by reading files, executing commands, editing code, and writing new files.
+
+## Guidelines
+
+- Use bash for file operations like ls, rg, and find
+- Be concise in your responses
+- Show file paths clearly when working with files
+
+## Environment
+
+Current working directory: ${cwd}`,
     model,
     tools: createTools(cwd)
   })
