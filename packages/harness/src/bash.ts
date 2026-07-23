@@ -25,12 +25,13 @@ export type BashTool = Tool<BashInput, BashOutput, BashContext> & {
   execute: ToolExecuteFunction<BashInput, BashOutput, BashContext>
 }
 
-async function executeBash(cwd: string, { command }: BashInput): Promise<BashOutput> {
-  const { stdout, stderr } = await execAsync(command, {
-    cwd,
-    shell: process.env.SHELL
-  })
-  const output = `${stdout}${stderr}`
+interface CommandError extends Error {
+  code?: number | string
+  stdout?: string
+  stderr?: string
+}
+
+async function formatOutput(output: string): Promise<string> {
   let content = output.trimEnd()
   const truncatedContent = truncateTail(content)
 
@@ -42,7 +43,24 @@ async function executeBash(cwd: string, { command }: BashInput): Promise<BashOut
     content = `${truncatedContent}\n\n[Output truncated to the last ${MAX_LINES} lines or ${MAX_BYTES / 1024} KB. Full output: ${outputPath}]`
   }
 
-  return { content: content || '(no output)' }
+  return content || '(no output)'
+}
+
+async function executeBash(cwd: string, { command }: BashInput): Promise<BashOutput> {
+  try {
+    const { stdout, stderr } = await execAsync(command, {
+      cwd,
+      shell: process.env.SHELL
+    })
+
+    return { content: await formatOutput(`${stdout}${stderr}`) }
+  } catch (error) {
+    const commandError = error as CommandError
+    if (commandError.stdout === undefined && commandError.stderr === undefined) throw error
+
+    const content = await formatOutput(`${commandError.stdout ?? ''}${commandError.stderr ?? ''}`)
+    throw new Error(`${content}\n\nCommand exited with code ${commandError.code ?? 'unknown'}`)
+  }
 }
 
 export function createBashTool(cwd: string): BashTool {
