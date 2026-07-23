@@ -1,3 +1,5 @@
+import { existsSync, readFileSync } from 'node:fs'
+import { join } from 'node:path'
 import { ToolLoopAgent, type LanguageModel, type ToolSet } from 'ai'
 import { createBashTool, type BashTool } from './bash.ts'
 import { createEditTool, type EditTool } from './edit.ts'
@@ -26,6 +28,14 @@ export function createTools(cwd: string): HarnessTools {
 }
 
 export function createAgent(model: LanguageModel, cwd: string) {
+  const projectInstructionsPath = join(cwd, 'AGENTS.md')
+  const projectInstructions = existsSync(projectInstructionsPath)
+    ? readFileSync(projectInstructionsPath, 'utf8').trim()
+    : ''
+  const projectContext = projectInstructions
+    ? `\n\n## Project Instructions\n\n${projectInstructions}`
+    : ''
+
   return new ToolLoopAgent<never, HarnessTools, never>({
     instructions: `You are an expert coding assistant operating inside Lefa, a coding agent harness. You help users by reading files, executing commands, editing code, and writing new files.
 
@@ -37,7 +47,7 @@ export function createAgent(model: LanguageModel, cwd: string) {
 
 ## Environment
 
-Current working directory: ${cwd}`,
+Current working directory: ${cwd}${projectContext}`,
     model,
     tools: createTools(cwd)
   })
