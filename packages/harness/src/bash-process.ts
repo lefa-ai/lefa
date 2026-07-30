@@ -67,11 +67,9 @@ interface MergedOutput {
   stop: () => void
 }
 
-export async function runBashProcess({
-  command,
-  cwd,
-  abortSignal
-}: BashProcessOptions): Promise<BashProcessResult> {
+export async function runBashProcess(options: BashProcessOptions): Promise<BashProcessResult> {
+  const { abortSignal } = options
+
   if (process.platform !== 'darwin' && process.platform !== 'linux') {
     throw new Error('The bash tool currently supports macOS and Linux')
   }
@@ -81,28 +79,16 @@ export async function runBashProcess({
 
   try {
     abortSignal?.throwIfAborted()
-    return await runBashProcessWithAbort({
-      command,
-      cwd,
-      abortSignal,
-      abort: abort.promise
-    })
+    return await runBashProcessWithAbort(options, abort.promise)
   } finally {
     abort.dispose()
   }
 }
 
-async function runBashProcessWithAbort({
-  command,
-  cwd,
-  abortSignal,
-  abort
-}: {
-  command: string
-  cwd: string
-  abortSignal: AbortSignal | undefined
+async function runBashProcessWithAbort(
+  { command, cwd, abortSignal }: BashProcessOptions,
   abort: Promise<AbortEvent>
-}): Promise<BashProcessResult> {
+): Promise<BashProcessResult> {
   const child = spawn('bash', ['-c', command], {
     cwd,
     detached: true,
@@ -176,12 +162,8 @@ async function runBashProcessWithAbort({
       throw abortReason(abortSignal)
     }
 
-    if (drained.type === 'drain-limit') {
-      await terminateProcessGroup(child.pid)
-      mergedOutput.stop()
-    } else {
-      await terminateProcessGroup(child.pid)
-    }
+    await terminateProcessGroup(child.pid)
+    if (drained.type === 'drain-limit') mergedOutput.stop()
 
     const captured =
       drained.type === 'captured' || drained.type === 'capture-error' ? drained : await captureEvent
