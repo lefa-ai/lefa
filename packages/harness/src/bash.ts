@@ -2,12 +2,8 @@ import { tool, type Tool, type ToolExecuteFunction } from 'ai'
 import * as z from 'zod'
 import { runBashProcess, type BashProcessResult } from './bash-process.ts'
 
-const DEFAULT_TIMEOUT = 120
-const MAX_TIMEOUT = 600
-
 const bashInputSchema = z.strictObject({
-  command: z.string(),
-  timeout: z.int().positive().max(MAX_TIMEOUT).default(DEFAULT_TIMEOUT)
+  command: z.string()
 })
 
 export type BashInput = z.infer<typeof bashInputSchema>
@@ -24,20 +20,19 @@ export type BashTool = Tool<BashInput, BashOutput, BashContext> & {
 
 async function executeBash(
   cwd: string,
-  { command, timeout }: BashInput,
+  { command }: BashInput,
   abortSignal?: AbortSignal
 ): Promise<BashOutput> {
   const result = await runBashProcess({
     command,
     cwd,
-    timeoutMs: timeout * 1000,
     ...(abortSignal === undefined ? {} : { abortSignal })
   })
 
-  return { content: formatOutput(result, timeout) }
+  return { content: formatOutput(result) }
 }
 
-function formatOutput(result: BashProcessResult, timeout: number): string {
+function formatOutput(result: BashProcessResult): string {
   const parts: string[] = []
 
   if (result.output.outputPath) {
@@ -48,7 +43,7 @@ function formatOutput(result: BashProcessResult, timeout: number): string {
   if (preview) parts.push(preview)
 
   if (result.status === 'timed-out') {
-    parts.push(`Command timed out after ${timeout} seconds.`)
+    parts.push('Command timed out.')
   } else if (result.status === 'signaled') {
     parts.push(`Command terminated by ${result.signal}.`)
   } else if (result.exitCode !== 0) {
