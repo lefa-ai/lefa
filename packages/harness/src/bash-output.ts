@@ -37,7 +37,7 @@ export class OutputCapture {
     this.appendTail(buffer)
 
     if (this.outputFile) {
-      await writeAll(this.outputFile, buffer)
+      await this.outputFile.writeFile(buffer)
       return
     }
 
@@ -97,7 +97,7 @@ export class OutputCapture {
     this.outputPath = path
 
     try {
-      for (const chunk of this.bufferedChunks) await writeAll(file, chunk)
+      for (const chunk of this.bufferedChunks) await file.writeFile(chunk)
       this.bufferedChunks.length = 0
     } catch (error) {
       await this.close().catch(() => undefined)
@@ -130,16 +130,6 @@ async function removeOldOutputs(): Promise<void> {
         if ((await stat(path)).mtimeMs < cutoff) await rm(path, { force: true })
       })
   )
-}
-
-async function writeAll(file: FileHandle, buffer: Buffer): Promise<void> {
-  let offset = 0
-
-  while (offset < buffer.length) {
-    const { bytesWritten } = await file.write(buffer, offset)
-    if (bytesWritten === 0) throw new Error('Failed to write command output')
-    offset += bytesWritten
-  }
 }
 
 function decodeTail(buffer: Buffer): string {
