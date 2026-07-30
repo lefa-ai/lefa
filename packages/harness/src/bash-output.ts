@@ -1,0 +1,176 @@
+import { randomUUID } from 'node:crypto'
+import { mkdir, open, readdir, rm, stat, type FileHandle } from 'node:fs/promises'
+import { homedir } from 'node:os'
+import { join } from 'node:path'
+import { MAX_BYTES, MAX_LINES } from './truncate.ts'
+
+const MAX_AGE = 7 * 24 * 60 * 60 * 1000
+const DEFAULT_OUTPUT_DIRECTORY = join(homedir(), '.cache', 'lefa', 'bash')
+const cleanedDirectories = new Set<string>()
+
+export interface CapturedOutput {
+  preview: string
+  outputPath?: string
+}
+
+export interface OutputCaptureOptions {
+  directory?: string
+}
+
+export class OutputCapture {
+  private readonly directory: string
+  private readonly bufferedChunks: Buffer[] = []
+  private tailChunks: Buffer[] = []
+  private tailBytes = 0
+  private totalBytes = 0
+  private newlineCount = 0
+  private lastByte: number | undefined
+  private outputFile: FileHandle | undefined
+  private outputPath: string | undefined
+
+  constructor({ directory = DEFAULT_OUTPUT_DIRECTORY }: OutputCaptureOptions = {}) {
+    this.directory = directory
+  }
+
+  async write(chunk: Uint8Array): Promise<void> {
+    if (chunk.byteLength === 0) return
+
+    const buffer = Buffer.from(chunk)
+    this.totalBytes += buffer.length
+    this.lastByte = buffer[buffer.length - 1]
+
+    for (const byte of buffer) {
+      if (byte === 0x0a) this.newlineCount++
+    }
+
+    this.appendTail(buffer)
+
+    if (this.outputFile) {
+      await writeAll(this.outputFile, buffer)
+      return
+    }
+
+    this.bufferedChunks.push(buffer)
+
+    if (this.isTruncated()) await this.startSpilling()
+  }
+
+  async finish(): Promise<CapturedOutput> {
+    await this.close()
+
+    const preview = decodeTail(Buffer.concat(this.tailChunks, this.tailBytes))
+    return this.outputPath === undefined ? { preview } : { preview, outputPath: this.outputPath }
+  }
+
+  async close(): Promise<void> {
+    const outputFile = this.outputFile
+    this.outputFile = undefined
+    await outputFile?.close()
+  }
+
+  private appendTail(buffer: Buffer): void {
+    if (buffer.length >= MAX_BYTES) {
+      this.tailChunks = [Buffer.from(buffer.subarray(buffer.length - MAX_BYTES))]
+      this.tailBytes = MAX_BYTES
+      return
+    }
+
+    this.tailChunks.push(buffer)
+    this.tailBytes += buffer.length
+
+    while (this.tailBytes > MAX_BYTES) {
+      const first = this.tailChunks[0]
+      if (!first) break
+
+      const excess = this.tailBytes - MAX_BYTES
+      if (first.length <= excess) {
+        this.tailChunks.shift()
+        this.tailBytes -= first.length
+      } else {
+        this.tailChunks[0] = Buffer.from(first.subarray(excess))
+        this.tailBytes -= excess
+      }
+    }
+  }
+
+  private isTruncated(): boolean {
+    const lineCount =
+      this.totalBytes === 0 ? 0 : this.newlineCount + (this.lastByte === 0x0a ? 0 : 1)
+
+    return this.totalBytes > MAX_BYTES || lineCount > MAX_LINES
+  }
+
+  private async startSpilling(): Promise<void> {
+    const { file, path } = await createOutputFile(this.directory)
+    this.outputFile = file
+    this.outputPath = path
+
+    try {
+      for (const chunk of this.bufferedChunks) await writeAll(file, chunk)
+      this.bufferedChunks.length = 0
+    } catch (error) {
+      await this.close().catch(() => undefined)
+      throw error
+    }
+  }
+}
+
+async function createOutputFile(directory: string): Promise<{ file: FileHandle; path: string }> {
+  await mkdir(directory, { recursive: true, mode: 0o700 })
+
+  if (!cleanedDirectories.has(directory)) {
+    cleanedDirectories.add(directory)
+    await removeOldOutputs(directory).catch(() => undefined)
+  }
+
+  const path = join(directory, `${Date.now()}-${randomUUID()}.log`)
+  return { file: await open(path, 'wx', 0o600), path }
+}
+
+async function removeOldOutputs(directory: string): Promise<void> {
+  const cutoff = Date.now() - MAX_AGE
+  const entries = await readdir(directory, { withFileTypes: true })
+
+  await Promise.all(
+    entries
+      .filter((entry) => entry.isFile() && entry.name.endsWith('.log'))
+      .map(async (entry) => {
+        const path = join(directory, entry.name)
+        if ((await stat(path)).mtimeMs < cutoff) await rm(path, { force: true })
+      })
+  )
+}
+
+async function writeAll(file: FileHandle, buffer: Buffer): Promise<void> {
+  let offset = 0
+
+  while (offset < buffer.length) {
+    const { bytesWritten } = await file.write(buffer, offset)
+    if (bytesWritten === 0) throw new Error('Failed to write command output')
+    offset += bytesWritten
+  }
+}
+
+function decodeTail(buffer: Buffer): string {
+  let start = lineStart(buffer)
+
+  while (start < buffer.length && ((buffer[start] as number) & 0xc0) === 0x80) start++
+
+  return new TextDecoder().decode(buffer.subarray(start))
+}
+
+function lineStart(buffer: Buffer): number {
+  let remainingLines = MAX_LINES
+  let index = buffer.length - 1
+
+  if (buffer[index] === 0x0a) index--
+
+  for (; index >= 0; index--) {
+    if (buffer[index] !== 0x0a) continue
+
+    remainingLines--
+    if (remainingLines === 0) return index + 1
+  }
+
+  return 0
+}
