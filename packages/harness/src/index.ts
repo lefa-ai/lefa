@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from 'node:fs'
+import { lstatSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { ToolLoopAgent, type LanguageModel, type ToolSet } from 'ai'
 import { createBashTool, type BashTool } from './bash.ts'
@@ -29,7 +29,9 @@ export function createTools(cwd: string): HarnessTools {
 
 export function createAgent(model: LanguageModel, cwd: string) {
   const projectInstructionsPath = join(cwd, 'AGENTS.md')
-  const projectInstructions = existsSync(projectInstructionsPath)
+  const projectInstructions = lstatSync(projectInstructionsPath, {
+    throwIfNoEntry: false
+  })?.isFile()
     ? readFileSync(projectInstructionsPath, 'utf8').trim()
     : ''
   const projectContext = projectInstructions
