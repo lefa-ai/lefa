@@ -2,7 +2,7 @@ export const MAX_LINES = 2000
 export const MAX_BYTES = 50 * 1024
 
 export function splitLines(content: string): string[] {
-  if (!content) return []
+  if (!content) return ['']
 
   const lines = content.split('\n')
   if (content.endsWith('\n')) lines.pop()
