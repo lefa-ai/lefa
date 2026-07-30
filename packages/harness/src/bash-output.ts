@@ -5,20 +5,15 @@ import { join } from 'node:path'
 import { MAX_BYTES, MAX_LINES } from './truncate.ts'
 
 const MAX_AGE = 7 * 24 * 60 * 60 * 1000
-const DEFAULT_OUTPUT_DIRECTORY = join(homedir(), '.cache', 'lefa', 'bash')
-const cleanedDirectories = new Set<string>()
+const OUTPUT_DIRECTORY = join(homedir(), '.cache', 'lefa', 'bash')
+let outputDirectoryCleaned = false
 
 export interface CapturedOutput {
   preview: string
   outputPath?: string
 }
 
-export interface OutputCaptureOptions {
-  directory?: string
-}
-
 export class OutputCapture {
-  private readonly directory: string
   private readonly bufferedChunks: Buffer[] = []
   private tailChunks: Buffer[] = []
   private tailBytes = 0
@@ -27,10 +22,6 @@ export class OutputCapture {
   private lastByte: number | undefined
   private outputFile: FileHandle | undefined
   private outputPath: string | undefined
-
-  constructor({ directory = DEFAULT_OUTPUT_DIRECTORY }: OutputCaptureOptions = {}) {
-    this.directory = directory
-  }
 
   async write(chunk: Uint8Array): Promise<void> {
     if (chunk.byteLength === 0) return
@@ -101,7 +92,7 @@ export class OutputCapture {
   }
 
   private async startSpilling(): Promise<void> {
-    const { file, path } = await createOutputFile(this.directory)
+    const { file, path } = await createOutputFile()
     this.outputFile = file
     this.outputPath = path
 
@@ -115,27 +106,27 @@ export class OutputCapture {
   }
 }
 
-async function createOutputFile(directory: string): Promise<{ file: FileHandle; path: string }> {
-  await mkdir(directory, { recursive: true, mode: 0o700 })
+async function createOutputFile(): Promise<{ file: FileHandle; path: string }> {
+  await mkdir(OUTPUT_DIRECTORY, { recursive: true, mode: 0o700 })
 
-  if (!cleanedDirectories.has(directory)) {
-    cleanedDirectories.add(directory)
-    await removeOldOutputs(directory).catch(() => undefined)
+  if (!outputDirectoryCleaned) {
+    outputDirectoryCleaned = true
+    await removeOldOutputs().catch(() => undefined)
   }
 
-  const path = join(directory, `${Date.now()}-${randomUUID()}.log`)
+  const path = join(OUTPUT_DIRECTORY, `${Date.now()}-${randomUUID()}.log`)
   return { file: await open(path, 'wx', 0o600), path }
 }
 
-async function removeOldOutputs(directory: string): Promise<void> {
+async function removeOldOutputs(): Promise<void> {
   const cutoff = Date.now() - MAX_AGE
-  const entries = await readdir(directory, { withFileTypes: true })
+  const entries = await readdir(OUTPUT_DIRECTORY, { withFileTypes: true })
 
   await Promise.all(
     entries
       .filter((entry) => entry.isFile() && entry.name.endsWith('.log'))
       .map(async (entry) => {
-        const path = join(directory, entry.name)
+        const path = join(OUTPUT_DIRECTORY, entry.name)
         if ((await stat(path)).mtimeMs < cutoff) await rm(path, { force: true })
       })
   )
