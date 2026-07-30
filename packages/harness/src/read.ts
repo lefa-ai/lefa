@@ -1,8 +1,9 @@
 import { constants } from 'node:fs'
 import { access, readFile } from 'node:fs/promises'
-import { tool, type Tool, type ToolExecuteFunction } from 'ai'
+import { tool } from 'ai'
 import * as z from 'zod'
 import { resolvePath } from './path.ts'
+import type { ExecutableTool } from './tool.ts'
 import { MAX_LINES, splitLines, truncateHead } from './truncate.ts'
 
 const readInputSchema = z.strictObject({
@@ -17,11 +18,7 @@ export interface ReadOutput {
   content: string
 }
 
-type ReadContext = Record<string, unknown>
-
-export type ReadTool = Tool<ReadInput, ReadOutput, ReadContext> & {
-  execute: ToolExecuteFunction<ReadInput, ReadOutput, ReadContext>
-}
+export type ReadTool = ExecutableTool<ReadInput, ReadOutput>
 
 async function readTextFile(
   cwd: string,
