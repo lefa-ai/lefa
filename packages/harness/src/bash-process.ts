@@ -1,4 +1,5 @@
 import { spawn } from 'node:child_process'
+import { addAbortListener } from 'node:events'
 import { PassThrough, type Readable } from 'node:stream'
 import { OutputCapture, type CapturedOutput } from './bash-output.ts'
 
@@ -50,17 +51,9 @@ type CaptureEvent =
       error: unknown
     }
 
-interface AbortEvent {
-  type: 'aborted'
-}
-
-interface TimeoutEvent {
-  type: 'timed-out'
-}
-
-interface DrainLimitEvent {
-  type: 'drain-limit'
-}
+type AbortEvent = 'aborted'
+type TimeoutEvent = 'timed-out'
+type DrainLimitEvent = 'drain-limit'
 
 interface MergedOutput {
   stream: PassThrough
@@ -122,11 +115,23 @@ async function runBashProcessWithAbort(
   const processEvent = waitForProcess(child)
   let timeoutHandle: NodeJS.Timeout | undefined
   const timeout = new Promise<TimeoutEvent>((resolve) => {
-    timeoutHandle = setTimeout(() => resolve({ type: 'timed-out' }), COMMAND_TIMEOUT)
+    timeoutHandle = setTimeout(() => resolve('timed-out'), COMMAND_TIMEOUT)
   })
 
   try {
     const first = await Promise.race([processEvent, captureFailure, abort, timeout])
+
+    if (first === 'aborted') {
+      await terminateAndDrain(child.pid, processEvent, captureEvent, mergedOutput)
+      throw abortReason(abortSignal)
+    }
+
+    if (first === 'timed-out') {
+      const captured = await terminateAndDrain(child.pid, processEvent, captureEvent, mergedOutput)
+      if (captured.type === 'capture-error') throw captured.error
+
+      return { status: 'timed-out', output: captured.output }
+    }
 
     if (first.type === 'process-error') {
       mergedOutput.stop()
@@ -139,34 +144,21 @@ async function runBashProcessWithAbort(
       throw first.error
     }
 
-    if (first.type === 'aborted') {
-      await terminateAndDrain(child.pid, processEvent, captureEvent, mergedOutput)
-      throw abortReason(abortSignal)
-    }
-
-    if (first.type === 'timed-out') {
-      const captured = await terminateAndDrain(child.pid, processEvent, captureEvent, mergedOutput)
-      if (captured.type === 'capture-error') throw captured.error
-
-      return { status: 'timed-out', output: captured.output }
-    }
-
     clearTimeout(timeoutHandle)
     timeoutHandle = undefined
     lastOutputAt = Date.now()
 
     const drained = await waitForPostExitDrain(captureEvent, abort, () => lastOutputAt)
 
-    if (drained.type === 'aborted') {
+    if (drained === 'aborted') {
       await terminateAndDrain(child.pid, processEvent, captureEvent, mergedOutput)
       throw abortReason(abortSignal)
     }
 
     await terminateProcessGroup(child.pid)
-    if (drained.type === 'drain-limit') mergedOutput.stop()
+    if (drained === 'drain-limit') mergedOutput.stop()
 
-    const captured =
-      drained.type === 'captured' || drained.type === 'capture-error' ? drained : await captureEvent
+    const captured = drained === 'drain-limit' ? await captureEvent : drained
 
     if (captured.type === 'capture-error') throw captured.error
     if (first.exitCode !== null) {
@@ -250,19 +242,12 @@ function createAbortEvent(signal: AbortSignal | undefined): {
   promise: Promise<AbortEvent>
   dispose: () => void
 } {
-  let onAbort: (() => void) | undefined
-  const promise = new Promise<AbortEvent>((resolve) => {
-    if (!signal) return
-    onAbort = () => resolve({ type: 'aborted' })
-    signal.addEventListener('abort', onAbort, { once: true })
-    if (signal.aborted) onAbort()
-  })
+  const { promise, resolve } = Promise.withResolvers<AbortEvent>()
+  const listener = signal ? addAbortListener(signal, () => resolve('aborted')) : undefined
 
   return {
     promise,
-    dispose: () => {
-      if (onAbort) signal?.removeEventListener('abort', onAbort)
-    }
+    dispose: () => listener?.[Symbol.dispose]()
   }
 }
 
@@ -277,7 +262,7 @@ async function waitForPostExitDrain(
     const now = Date.now()
     const waitTime = Math.min(deadline - now, OUTPUT_IDLE_TIME - (now - getLastOutputAt()))
 
-    if (waitTime <= 0) return { type: 'drain-limit' }
+    if (waitTime <= 0) return 'drain-limit'
 
     const event = await raceWithDelay<CaptureEvent | AbortEvent>([capture, abort], waitTime)
     if (event !== undefined) return event
