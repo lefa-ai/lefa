@@ -5,13 +5,12 @@ import { OutputCapture, type CapturedOutput } from './bash-output.ts'
 const TERMINATION_GRACE = 500
 const OUTPUT_IDLE_TIME = 100
 const OUTPUT_DRAIN_TIME = 2000
+const COMMAND_TIMEOUT = 120_000
 
 export interface BashProcessOptions {
   command: string
   cwd: string
-  timeoutMs: number
   abortSignal?: AbortSignal
-  outputDirectory?: string
 }
 
 export type BashProcessResult =
@@ -71,15 +70,10 @@ interface MergedOutput {
 export async function runBashProcess({
   command,
   cwd,
-  timeoutMs,
-  abortSignal,
-  outputDirectory
+  abortSignal
 }: BashProcessOptions): Promise<BashProcessResult> {
   if (process.platform !== 'darwin' && process.platform !== 'linux') {
     throw new Error('The bash tool currently supports macOS and Linux')
-  }
-  if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
-    throw new RangeError('timeoutMs must be a positive number')
   }
 
   abortSignal?.throwIfAborted()
@@ -90,9 +84,7 @@ export async function runBashProcess({
     return await runBashProcessWithAbort({
       command,
       cwd,
-      timeoutMs,
       abortSignal,
-      outputDirectory,
       abort: abort.promise
     })
   } finally {
@@ -103,16 +95,12 @@ export async function runBashProcess({
 async function runBashProcessWithAbort({
   command,
   cwd,
-  timeoutMs,
   abortSignal,
-  outputDirectory,
   abort
 }: {
   command: string
   cwd: string
-  timeoutMs: number
   abortSignal: AbortSignal | undefined
-  outputDirectory: string | undefined
   abort: Promise<AbortEvent>
 }): Promise<BashProcessResult> {
   const child = spawn('bash', ['-c', command], {
@@ -129,9 +117,7 @@ async function runBashProcessWithAbort({
     stdio: ['ignore', 'pipe', 'pipe']
   })
   const mergedOutput = mergeOutput(child.stdout, child.stderr)
-  const capture = new OutputCapture(
-    outputDirectory === undefined ? {} : { directory: outputDirectory }
-  )
+  const capture = new OutputCapture()
   let lastOutputAt = Date.now()
 
   const captureEvent: Promise<CaptureEvent> = captureOutput(mergedOutput.stream, capture, () => {
@@ -150,7 +136,7 @@ async function runBashProcessWithAbort({
   const processEvent = waitForProcess(child)
   let timeoutHandle: NodeJS.Timeout | undefined
   const timeout = new Promise<TimeoutEvent>((resolve) => {
-    timeoutHandle = setTimeout(() => resolve({ type: 'timed-out' }), timeoutMs)
+    timeoutHandle = setTimeout(() => resolve({ type: 'timed-out' }), COMMAND_TIMEOUT)
   })
 
   try {
