@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdtemp, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, it } from 'node:test'
@@ -9,7 +9,6 @@ import { createBashTool, type BashOutput } from './bash.ts'
 
 interface RawBashInput {
   command: string
-  timeout?: number
 }
 
 async function executeBash(
@@ -72,20 +71,19 @@ async function waitForProcessExit(pid: number): Promise<void> {
 }
 
 describe('bash tool', { skip: process.platform === 'win32' }, () => {
-  it('defines the model input defaults and text output', async () => {
+  it('defines the model input and text output', async () => {
     const bash = createBashTool('.')
     const schema = asSchema(bash.inputSchema)
 
     assert.deepEqual(await schema.validate?.({ command: 'pwd' }), {
       success: true,
-      value: { command: 'pwd', timeout: 120 }
+      value: { command: 'pwd' }
     })
-    assert.equal((await schema.validate?.({ command: 'pwd', timeout: 601 }))?.success, false)
     assert.ok(bash.toModelOutput)
     assert.deepEqual(
       await bash.toModelOutput({
         toolCallId: 'test-bash',
-        input: { command: 'pwd', timeout: 120 },
+        input: { command: 'pwd' },
         output: { content: 'output' }
       }),
       { type: 'text', value: 'output' }
@@ -107,18 +105,6 @@ describe('bash tool', { skip: process.platform === 'win32' }, () => {
     assert.equal(result.content, 'one\ntwo\nthree\n\nCommand exited with code 7.')
   })
 
-  it('times out and kills processes that ignore SIGTERM', async () => {
-    const startedAt = Date.now()
-    const result = await runBashProcess({
-      command: "trap '' TERM; while true; do sleep 1; done",
-      cwd: process.cwd(),
-      timeoutMs: 50
-    })
-
-    assert.equal(result.status, 'timed-out')
-    assert.ok(Date.now() - startedAt < 2000)
-  })
-
   it('passes caller cancellation through the tool and cleans up the process', async () => {
     await withTempDirectory(async (directory) => {
       const pidPath = join(directory, 'pid')
@@ -126,8 +112,7 @@ describe('bash tool', { skip: process.platform === 'win32' }, () => {
       const execution = executeBash(
         directory,
         {
-          command: `echo $$ > ${shellQuote(pidPath)}; trap '' TERM; while true; do sleep 1; done`,
-          timeout: 10
+          command: `echo $$ > ${shellQuote(pidPath)}; trap '' TERM; while true; do sleep 1; done`
         },
         controller.signal
       )
@@ -164,8 +149,7 @@ describe('bash tool', { skip: process.platform === 'win32' }, () => {
   it('captures output written shortly after the shell exits', async () => {
     const result = await runBashProcess({
       command: 'sleep 0.15; (sleep 0.05; echo late) &',
-      cwd: process.cwd(),
-      timeoutMs: 2000
+      cwd: process.cwd()
     })
 
     assert.equal(result.status, 'exited')
@@ -175,8 +159,7 @@ describe('bash tool', { skip: process.platform === 'win32' }, () => {
   it('does not leave background descendants running', async () => {
     const result = await runBashProcess({
       command: 'sleep 30 & echo $!',
-      cwd: process.cwd(),
-      timeoutMs: 2000
+      cwd: process.cwd()
     })
 
     assert.equal(result.status, 'exited')
@@ -187,31 +170,11 @@ describe('bash tool', { skip: process.platform === 'win32' }, () => {
     const startedAt = Date.now()
     const result = await runBashProcess({
       command: '(while true; do echo tick; sleep 0.02; done) & echo $!',
-      cwd: process.cwd(),
-      timeoutMs: 5000
+      cwd: process.cwd()
     })
 
     assert.equal(result.status, 'exited')
     assert.ok(Date.now() - startedAt < 4000)
     await waitForProcessExit(Number(result.output.preview.split('\n')[0]))
-  })
-
-  it('kills the command when output cannot be persisted', async () => {
-    await withTempDirectory(async (directory) => {
-      const pidPath = join(directory, 'pid')
-      const outputDirectory = join(directory, 'not-a-directory')
-      await writeFile(outputDirectory, 'file')
-
-      await assert.rejects(
-        runBashProcess({
-          command: `echo $$ > ${shellQuote(pidPath)}; while true; do printf '%01024d' 0; done`,
-          cwd: directory,
-          timeoutMs: 5000,
-          outputDirectory
-        })
-      )
-
-      await waitForProcessExit(Number(await readFile(pidPath, 'utf8')))
-    })
   })
 })
