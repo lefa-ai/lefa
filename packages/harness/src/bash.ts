@@ -1,6 +1,7 @@
-import { tool, type Tool, type ToolExecuteFunction } from 'ai'
+import { tool } from 'ai'
 import * as z from 'zod'
 import { runBashProcess, type BashProcessResult } from './bash-process.ts'
+import type { ExecutableTool } from './tool.ts'
 
 const bashInputSchema = z.strictObject({
   command: z.string()
@@ -12,11 +13,7 @@ export interface BashOutput {
   content: string
 }
 
-type BashContext = Record<string, unknown>
-
-export type BashTool = Tool<BashInput, BashOutput, BashContext> & {
-  execute: ToolExecuteFunction<BashInput, BashOutput, BashContext>
-}
+export type BashTool = ExecutableTool<BashInput, BashOutput>
 
 async function executeBash(
   cwd: string,
