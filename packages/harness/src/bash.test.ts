@@ -6,6 +6,7 @@ import { describe, it } from 'node:test'
 import { asSchema } from 'ai'
 import { runBashProcess } from './bash-process.ts'
 import { createBashTool, type BashOutput } from './bash.ts'
+import { MAX_BYTES } from './truncate.ts'
 
 interface RawBashInput {
   command: string
@@ -103,6 +104,30 @@ describe('bash tool', { skip: process.platform === 'win32' }, () => {
     })
 
     assert.equal(result.content, 'one\ntwo\nthree\n\nCommand exited with code 7.')
+  })
+
+  it('spills complete large output while returning a bounded tail', async () => {
+    const source = 'x'.repeat(60 * 1024)
+    const result = await executeBash(process.cwd(), {
+      command: `${shellQuote(process.execPath)} -e "process.stdout.write('x'.repeat(60 * 1024))"`
+    })
+    const match = result.content.match(
+      /^\[Output truncated\. Full output: (.+)\]\n\n([\s\S]+)$/
+    )
+
+    assert.ok(match)
+    const outputPath = match[1]
+    const preview = match[2]
+    assert.ok(outputPath)
+    assert.ok(preview)
+
+    try {
+      assert.equal(Buffer.byteLength(preview), MAX_BYTES)
+      assert.equal(preview, source.slice(-MAX_BYTES))
+      assert.equal(await readFile(outputPath, 'utf8'), source)
+    } finally {
+      await rm(outputPath, { force: true })
+    }
   })
 
   it('passes caller cancellation through the tool and cleans up the process', async () => {
