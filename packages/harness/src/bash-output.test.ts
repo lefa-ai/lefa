@@ -12,6 +12,37 @@ describe('bash output capture', () => {
     assert.deepEqual(await capture.finish(), { preview: 'Hello\n' })
   })
 
+  it('does not spill at the byte or line limits', async () => {
+    const bytes = 'x'.repeat(MAX_BYTES)
+    const byteCapture = new OutputCapture()
+    await byteCapture.write(Buffer.from(bytes))
+
+    assert.deepEqual(await byteCapture.finish(), { preview: bytes })
+
+    const lines = 'x\n'.repeat(MAX_LINES)
+    const lineCapture = new OutputCapture()
+    await lineCapture.write(Buffer.from(lines))
+
+    assert.deepEqual(await lineCapture.finish(), { preview: lines })
+  })
+
+  it('backfills buffered output and streams later writes after spilling', async () => {
+    const source = `${'x'.repeat(MAX_BYTES)}yz`
+    const capture = new OutputCapture()
+    await capture.write(Buffer.from(source.slice(0, MAX_BYTES)))
+    await capture.write(Buffer.from('y'))
+    await capture.write(Buffer.from('z'))
+    const result = await capture.finish()
+
+    try {
+      assert.ok(result.outputPath)
+      assert.equal(result.preview, source.slice(-MAX_BYTES))
+      assert.equal(await readFile(result.outputPath, 'utf8'), source)
+    } finally {
+      if (result.outputPath) await rm(result.outputPath, { force: true })
+    }
+  })
+
   it('keeps the last lines and spills the complete output', async () => {
     const source = Array.from({ length: MAX_LINES + 1 }, (_, index) => `Line ${index + 1}`).join(
       '\n'
@@ -32,18 +63,22 @@ describe('bash output capture', () => {
     }
   })
 
-  it('keeps a UTF-8-safe tail of one oversized line', async () => {
-    const source = '🙂'.repeat(MAX_BYTES / 4 + 100)
+  it('keeps a UTF-8-safe tail when writes split characters', async () => {
+    const source = Buffer.from('€'.repeat(MAX_BYTES))
     const capture = new OutputCapture()
-    await capture.write(Buffer.from(source))
+
+    for (let offset = 0; offset < source.length; offset += 4097) {
+      await capture.write(source.subarray(offset, offset + 4097))
+    }
+
     const result = await capture.finish()
 
     try {
       assert.ok(result.outputPath)
       assert.ok(Buffer.byteLength(result.preview) <= MAX_BYTES)
       assert.doesNotMatch(result.preview, /�/)
-      assert.match(result.preview, /🙂$/)
-      assert.equal(await readFile(result.outputPath, 'utf8'), source)
+      assert.equal(result.preview, '€'.repeat(Math.floor(MAX_BYTES / 3)))
+      assert.deepEqual(await readFile(result.outputPath), source)
     } finally {
       if (result.outputPath) await rm(result.outputPath, { force: true })
     }
