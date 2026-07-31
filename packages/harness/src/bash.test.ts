@@ -166,6 +166,21 @@ describe('bash tool', { skip: process.platform === 'win32' }, () => {
     await waitForProcessExit(Number(result.output.preview.trim()))
   })
 
+  it('kills background descendants that ignore SIGTERM after Bash exits', async () => {
+    await withTempDirectory(async (directory) => {
+      const pidPath = join(directory, 'pid')
+      const startedAt = Date.now()
+      const result = await runBashProcess({
+        command: `(trap '' TERM; exec >/dev/null 2>&1; while true; do sleep 1; done) & echo $! > ${shellQuote(pidPath)}`,
+        cwd: directory
+      })
+
+      assert.equal(result.status, 'exited')
+      assert.ok(Date.now() - startedAt < 4000)
+      await waitForProcessExit(Number(await readFile(pidPath, 'utf8')))
+    })
+  })
+
   it('caps draining from descendants that keep writing', async () => {
     const startedAt = Date.now()
     const result = await runBashProcess({
