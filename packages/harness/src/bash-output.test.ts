@@ -1,5 +1,8 @@
 import assert from 'node:assert/strict'
-import { readFile, rm, stat } from 'node:fs/promises'
+import { randomUUID } from 'node:crypto'
+import { mkdir, readFile, rm, stat, utimes, writeFile } from 'node:fs/promises'
+import { homedir } from 'node:os'
+import { join } from 'node:path'
 import { describe, it } from 'node:test'
 import { OutputCapture } from './bash-output.ts'
 import { MAX_BYTES, MAX_LINES } from './truncate.ts'
@@ -24,6 +27,38 @@ describe('bash output capture', () => {
     await lineCapture.write(Buffer.from(lines))
 
     assert.deepEqual(await lineCapture.finish(), { preview: lines })
+  })
+
+  it('deletes only stale managed output logs when spilling first starts', async () => {
+    const directory = join(homedir(), '.cache', 'lefa', 'bash')
+    const id = randomUUID()
+    const oldLog = join(directory, `${id}-old.log`)
+    const recentLog = join(directory, `${id}-recent.log`)
+    const oldText = join(directory, `${id}-old.txt`)
+    await mkdir(directory, { recursive: true })
+    await Promise.all([
+      writeFile(oldLog, 'old'),
+      writeFile(recentLog, 'recent'),
+      writeFile(oldText, 'old text')
+    ])
+    const oldDate = new Date(Date.now() - 8 * 24 * 60 * 60 * 1000)
+    await Promise.all([utimes(oldLog, oldDate, oldDate), utimes(oldText, oldDate, oldDate)])
+    const capture = new OutputCapture()
+    await capture.write(Buffer.from('x'.repeat(MAX_BYTES + 1)))
+    const result = await capture.finish()
+
+    try {
+      await assert.rejects(stat(oldLog), { code: 'ENOENT' })
+      assert.equal(await readFile(recentLog, 'utf8'), 'recent')
+      assert.equal(await readFile(oldText, 'utf8'), 'old text')
+    } finally {
+      await Promise.all([
+        rm(oldLog, { force: true }),
+        rm(recentLog, { force: true }),
+        rm(oldText, { force: true }),
+        result.outputPath ? rm(result.outputPath, { force: true }) : Promise.resolve()
+      ])
+    }
   })
 
   it('backfills buffered output and streams later writes after spilling', async () => {
@@ -78,6 +113,21 @@ describe('bash output capture', () => {
       assert.ok(Buffer.byteLength(result.preview) <= MAX_BYTES)
       assert.doesNotMatch(result.preview, /�/)
       assert.equal(result.preview, '€'.repeat(Math.floor(MAX_BYTES / 3)))
+      assert.deepEqual(await readFile(result.outputPath), source)
+    } finally {
+      if (result.outputPath) await rm(result.outputPath, { force: true })
+    }
+  })
+
+  it('keeps the final bytes of one oversized write', async () => {
+    const source = Buffer.from('x'.repeat(MAX_BYTES + 100))
+    const capture = new OutputCapture()
+    await capture.write(source)
+    const result = await capture.finish()
+
+    try {
+      assert.ok(result.outputPath)
+      assert.equal(result.preview, 'x'.repeat(MAX_BYTES))
       assert.deepEqual(await readFile(result.outputPath), source)
     } finally {
       if (result.outputPath) await rm(result.outputPath, { force: true })

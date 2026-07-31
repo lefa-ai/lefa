@@ -4,20 +4,29 @@ import { Redis } from "@upstash/redis";
 // Storage tab. The fallback chain covers both the Upstash Marketplace names
 // (UPSTASH_REDIS_REST_*), Vercel's prefixed KV names, and the legacy Vercel
 // KV names (KV_REST_API_*).
-const redis = new Redis({
-  url:
-    process.env.KV_REST_API_URL ||
-    process.env.UPSTASH_REDIS_REST_URL ||
-    process.env.UPSTASH_REDIS_REST_KV_REST_API_URL,
-  token:
-    process.env.KV_REST_API_TOKEN ||
-    process.env.UPSTASH_REDIS_REST_TOKEN ||
-    process.env.UPSTASH_REDIS_REST_KV_REST_API_TOKEN,
-});
-
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
+let redis;
 
 export default async function handler(req, res) {
+  redis ??= new Redis(redisConfig());
+
+  return handleWaitlist(req, res, redis);
+}
+
+export function redisConfig(env = process.env) {
+  return {
+    url:
+      env.KV_REST_API_URL ||
+      env.UPSTASH_REDIS_REST_URL ||
+      env.UPSTASH_REDIS_REST_KV_REST_API_URL,
+    token:
+      env.KV_REST_API_TOKEN ||
+      env.UPSTASH_REDIS_REST_TOKEN ||
+      env.UPSTASH_REDIS_REST_KV_REST_API_TOKEN,
+  };
+}
+
+export async function handleWaitlist(req, res, store) {
   if (req.method !== "POST") return res.status(405).json({ error: "method_not_allowed" });
 
   // Vercel parses JSON bodies automatically; guard against a raw string too.
@@ -31,8 +40,8 @@ export default async function handler(req, res) {
   try {
     // One hash keyed by email → dedupes on re-submit and keeps the first-seen
     // timestamp. hlen gives the running signup count.
-    await redis.hsetnx("waitlist", email, new Date().toISOString());
-    const count = await redis.hlen("waitlist");
+    await store.hsetnx("waitlist", email, new Date().toISOString());
+    const count = await store.hlen("waitlist");
     return res.status(200).json({ ok: true, count });
   } catch (err) {
     return res.status(500).json({ error: "store_failed" });

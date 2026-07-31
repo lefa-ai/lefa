@@ -1,4 +1,5 @@
 node_modules/
+coverage/
 .vercel/
 .DS_Store
 .env

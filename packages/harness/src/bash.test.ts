@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { mkdtemp, readFile, rm } from 'node:fs/promises'
+import { mkdtemp, readFile, realpath, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, it } from 'node:test'
@@ -144,6 +144,46 @@ describe('bash tool', { skip: !supportsBash }, () => {
     assert.equal(result.content, 'one\ntwo\nthree\n\nCommand exited with code 7.')
   })
 
+  it('starts in the configured directory with a noninteractive inherited environment', async () => {
+    await withTempDirectory(async (directory) => {
+      const previous = process.env.LEFA_TEST_INHERITED
+      process.env.LEFA_TEST_INHERITED = 'inherited'
+      const script = `const fs = require('node:fs')
+process.stdout.write(JSON.stringify({
+  cwd: process.cwd(),
+  input: fs.readFileSync(0, 'utf8'),
+  inherited: process.env.LEFA_TEST_INHERITED,
+  noColor: process.env.NO_COLOR,
+  term: process.env.TERM,
+  pager: process.env.PAGER,
+  gitPager: process.env.GIT_PAGER,
+  ghPager: process.env.GH_PAGER
+}))`
+
+      try {
+        const result = await runBashProcess({
+          command: `${shellQuote(process.execPath)} -e ${shellQuote(script)}`,
+          cwd: directory
+        })
+
+        assert.equal(result.status, 'exited')
+        assert.deepEqual(JSON.parse(result.output.preview), {
+          cwd: await realpath(directory),
+          input: '',
+          inherited: 'inherited',
+          noColor: '1',
+          term: 'dumb',
+          pager: 'cat',
+          gitPager: 'cat',
+          ghPager: 'cat'
+        })
+      } finally {
+        if (previous === undefined) delete process.env.LEFA_TEST_INHERITED
+        else process.env.LEFA_TEST_INHERITED = previous
+      }
+    })
+  })
+
   it('spills complete large output while returning a bounded tail', async () => {
     const source = 'x'.repeat(60 * 1024)
     const result = await executeBash(process.cwd(), {
@@ -284,6 +324,30 @@ describe('bash tool', { skip: !supportsBash }, () => {
         content: 'before\n\nCommand terminated by SIGTERM.'
       }
     )
+  })
+
+  it('returns a fixed timeout as a normal tool result', { timeout: 5000 }, async () => {
+    const originalSetTimeout = globalThis.setTimeout
+    globalThis.setTimeout = ((
+      callback: (...args: unknown[]) => void,
+      milliseconds?: number,
+      ...args: unknown[]
+    ) =>
+      originalSetTimeout(
+        callback,
+        milliseconds === 120_000 ? 10 : milliseconds,
+        ...args
+      )) as typeof setTimeout
+
+    try {
+      const result = await executeBash(process.cwd(), {
+        command: "printf 'started\\n'; trap '' TERM; while true; do sleep 1; done"
+      })
+
+      assert.match(result.content, /Command timed out\.$/)
+    } finally {
+      globalThis.setTimeout = originalSetTimeout
+    }
   })
 
   it('throws when Bash cannot be spawned in the working directory', async () => {
