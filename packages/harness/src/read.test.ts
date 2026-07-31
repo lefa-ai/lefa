@@ -120,6 +120,8 @@ describe('read tool', () => {
       success: true,
       value: { path: 'notes.txt', offset: 1, limit: 2000 }
     })
+    assert.equal((await schema.validate?.({ path: '' }))?.success, false)
+    assert.equal((await schema.validate?.({ path: 'notes.txt', extra: true }))?.success, false)
     assert.ok(read.toModelOutput)
     assert.deepEqual(
       await read.toModelOutput({
@@ -131,6 +133,16 @@ describe('read tool', () => {
     )
   })
 
+  it('reads an empty file', async () => {
+    await withWorkspace(async (workspaceRoot) => {
+      await writeFile(join(workspaceRoot, 'empty.txt'), '')
+
+      assert.deepEqual(await executeRead(workspaceRoot, { path: 'empty.txt' }), {
+        content: ''
+      })
+    })
+  })
+
   it("truncates at Pi's default line limit", async () => {
     await withWorkspace(async (workspaceRoot) => {
       const lines = Array.from({ length: 2001 }, (_, index) => `Line ${index + 1}`)
@@ -138,6 +150,22 @@ describe('read tool', () => {
 
       const result = await executeRead(workspaceRoot, {
         path: 'large.txt'
+      })
+
+      assert.match(result.content, /Line 2000/)
+      assert.doesNotMatch(result.content, /Line 2001/)
+      assert.match(result.content, /Use offset=2001 to continue/)
+    })
+  })
+
+  it('caps an explicitly oversized limit at the tool maximum', async () => {
+    await withWorkspace(async (workspaceRoot) => {
+      const lines = Array.from({ length: 2001 }, (_, index) => `Line ${index + 1}`)
+      await writeFile(join(workspaceRoot, 'large.txt'), lines.join('\n'))
+
+      const result = await executeRead(workspaceRoot, {
+        path: 'large.txt',
+        limit: 10_000
       })
 
       assert.match(result.content, /Line 2000/)
@@ -183,6 +211,14 @@ describe('read tool', () => {
         executeRead(workspaceRoot, { path: 'short.txt', offset: 3 }),
         /Offset 3 is beyond end of file \(2 lines total\)/
       )
+    })
+  })
+
+  it('propagates missing-file failures', async () => {
+    await withWorkspace(async (workspaceRoot) => {
+      await assert.rejects(executeRead(workspaceRoot, { path: 'missing.txt' }), {
+        code: 'ENOENT'
+      })
     })
   })
 
