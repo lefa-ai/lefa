@@ -1,0 +1,2 @@
+- Bash tool as background process
+- Let the agent run code and execute it

@@ -1,8 +1,9 @@
 import { mkdir, writeFile } from 'node:fs/promises'
 import { dirname } from 'node:path'
-import { tool, type Tool, type ToolExecuteFunction } from 'ai'
+import { tool } from 'ai'
 import * as z from 'zod'
 import { resolvePath } from './path.ts'
+import type { ExecutableTool } from './tool.ts'
 
 const writeInputSchema = z.strictObject({
   path: z.string().min(1).describe('Relative or absolute path'),
@@ -15,11 +16,7 @@ export interface WriteOutput {
   content: string
 }
 
-type WriteContext = Record<string, unknown>
-
-export type WriteTool = Tool<WriteInput, WriteOutput, WriteContext> & {
-  execute: ToolExecuteFunction<WriteInput, WriteOutput, WriteContext>
-}
+export type WriteTool = ExecutableTool<WriteInput, WriteOutput>
 
 async function writeTextFile(cwd: string, { path, content }: WriteInput): Promise<WriteOutput> {
   const absolutePath = resolvePath(cwd, path)

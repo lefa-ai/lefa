@@ -1,12 +1,10 @@
-import { exec } from 'node:child_process'
-import { promisify } from 'node:util'
-import { tool, type Tool, type ToolExecuteFunction } from 'ai'
+import { tool } from 'ai'
 import * as z from 'zod'
-
-const execAsync = promisify(exec)
+import { runBashProcess, type BashProcessResult } from './bash-process.ts'
+import type { ExecutableTool } from './tool.ts'
 
 const bashInputSchema = z.strictObject({
-  command: z.string().min(1).describe('Bash command to execute')
+  command: z.string()
 })
 
 export type BashInput = z.infer<typeof bashInputSchema>
@@ -15,28 +13,50 @@ export interface BashOutput {
   content: string
 }
 
-type BashContext = Record<string, unknown>
+export type BashTool = ExecutableTool<BashInput, BashOutput>
 
-export type BashTool = Tool<BashInput, BashOutput, BashContext> & {
-  execute: ToolExecuteFunction<BashInput, BashOutput, BashContext>
+async function executeBash(
+  cwd: string,
+  { command }: BashInput,
+  abortSignal?: AbortSignal
+): Promise<BashOutput> {
+  const result = await runBashProcess({
+    command,
+    cwd,
+    ...(abortSignal === undefined ? {} : { abortSignal })
+  })
+
+  return { content: formatOutput(result) }
 }
 
-async function executeBash(cwd: string, { command }: BashInput): Promise<BashOutput> {
-  const { stdout, stderr } = await execAsync(command, {
-    cwd,
-    shell: process.env.SHELL
-  })
-  const content = `${stdout}${stderr}`.trimEnd()
+function formatOutput(result: BashProcessResult): string {
+  const parts: string[] = []
 
-  return { content: content || '(no output)' }
+  if (result.output.outputPath) {
+    parts.push(`[Output truncated. Full output: ${result.output.outputPath}]`)
+  }
+
+  const preview = result.output.preview.trimEnd()
+  if (preview) parts.push(preview)
+
+  if (result.status === 'timed-out') {
+    parts.push('Command timed out.')
+  } else if (result.status === 'signaled') {
+    parts.push(`Command terminated by ${result.signal}.`)
+  } else if (result.exitCode !== 0) {
+    parts.push(`Command exited with code ${result.exitCode}.`)
+  }
+
+  return parts.join('\n\n') || 'Command completed successfully.'
 }
 
 export function createBashTool(cwd: string): BashTool {
   return tool({
-    description: 'Execute a bash command in the current working directory. Returns stdout and stderr.',
+    description:
+      'Execute a Bash command. Returns combined stdout and stderr, limited to the last 2,000 lines or 50 KB. If truncated, the complete output is saved to a temporary file.',
     inputSchema: bashInputSchema,
     strict: true,
-    execute: (input) => executeBash(cwd, input),
+    execute: (input, { abortSignal }) => executeBash(cwd, input, abortSignal),
     toModelOutput: ({ output }) => ({ type: 'text', value: output.content })
   })
 }

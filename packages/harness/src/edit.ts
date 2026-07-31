@@ -1,7 +1,8 @@
 import { readFile, writeFile } from 'node:fs/promises'
-import { tool, type Tool, type ToolExecuteFunction } from 'ai'
+import { tool } from 'ai'
 import * as z from 'zod'
 import { resolvePath } from './path.ts'
+import type { ExecutableTool } from './tool.ts'
 
 const editInputSchema = z.strictObject({
   path: z.string().min(1).describe('Relative or absolute path'),
@@ -15,16 +16,9 @@ export interface EditOutput {
   content: string
 }
 
-type EditContext = Record<string, unknown>
+export type EditTool = ExecutableTool<EditInput, EditOutput>
 
-export type EditTool = Tool<EditInput, EditOutput, EditContext> & {
-  execute: ToolExecuteFunction<EditInput, EditOutput, EditContext>
-}
-
-async function editFile(
-  cwd: string,
-  { path, oldText, newText }: EditInput
-): Promise<EditOutput> {
+async function editFile(cwd: string, { path, oldText, newText }: EditInput): Promise<EditOutput> {
   const absolutePath = resolvePath(cwd, path)
   const content = await readFile(absolutePath, 'utf8')
   const match = content.indexOf(oldText)
