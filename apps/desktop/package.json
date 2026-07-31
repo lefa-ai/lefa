@@ -5,6 +5,8 @@
   "scripts": {
     "format": "prettier --write .",
     "lint": "eslint --cache .",
+    "test": "vitest run",
+    "test:coverage": "vitest run --coverage",
     "typecheck:node": "tsc --noEmit -p tsconfig.node.json --composite false",
     "typecheck:web": "tsc --noEmit -p tsconfig.web.json --composite false",
     "typecheck": "pnpm typecheck:node && pnpm typecheck:web",
@@ -14,10 +16,13 @@
   },
   "devDependencies": {
     "@eslint/js": "^9.39.5",
+    "@testing-library/react": "^16.3.2",
+    "@testing-library/user-event": "^14.6.1",
     "@types/node": "^24.13.3",
     "@types/react": "^19.2.7",
     "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react": "^5.1.1",
+    "@vitest/coverage-v8": "^4.1.10",
     "electron": "^43.1.1",
     "electron-vite": "^5.0.0",
     "eslint": "^9.39.5",
@@ -25,12 +30,14 @@
     "eslint-plugin-react": "^7.37.5",
     "eslint-plugin-react-hooks": "^7.0.1",
     "eslint-plugin-react-refresh": "^0.5.3",
+    "jsdom": "^30.0.1",
     "prettier": "^3.7.4",
     "react": "^19.2.1",
     "react-dom": "^19.2.1",
     "typescript": "^6.0.3",
     "typescript-eslint": "^8.64.0",
-    "vite": "^7.2.6"
+    "vite": "^7.2.6",
+    "vitest": "^4.1.10"
   },
   "dependencies": {
     "@ai-sdk/anthropic": "^4.0.18",
