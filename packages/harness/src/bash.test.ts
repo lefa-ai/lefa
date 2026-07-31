@@ -65,13 +65,50 @@ async function waitForProcessExit(pid: number): Promise<void> {
   const deadline = Date.now() + 2000
 
   while (processExists(pid) && Date.now() < deadline) {
-    await new Promise((resolve) => setTimeout(resolve, 20))
+    await delay(20)
   }
 
-  assert.equal(processExists(pid), false, `Process ${pid} is still running`)
+  if (!processExists(pid)) return
+
+  killProcess(pid)
+  assert.fail(`Process ${pid} is still running`)
 }
 
-describe('bash tool', { skip: process.platform === 'win32' }, () => {
+async function waitForPidFile(path: string): Promise<number> {
+  const deadline = Date.now() + 2000
+
+  while (Date.now() < deadline) {
+    try {
+      const content = (await readFile(path, 'utf8')).trim()
+      const pid = Number(content)
+
+      if (Number.isSafeInteger(pid) && pid > 0) return pid
+      if (content) throw new Error(`Invalid PID in ${path}`)
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+    }
+
+    await delay(10)
+  }
+
+  throw new Error(`Timed out waiting for a PID in ${path}`)
+}
+
+function delay(milliseconds: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, milliseconds))
+}
+
+function killProcess(pid: number): void {
+  try {
+    process.kill(pid, 'SIGKILL')
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ESRCH') throw error
+  }
+}
+
+const supportsBash = process.platform === 'darwin' || process.platform === 'linux'
+
+describe('bash tool', { skip: !supportsBash }, () => {
   it('defines the model input and text output', async () => {
     const bash = createBashTool('.')
     const schema = asSchema(bash.inputSchema)
@@ -80,6 +117,7 @@ describe('bash tool', { skip: process.platform === 'win32' }, () => {
       success: true,
       value: { command: 'pwd' }
     })
+    assert.equal((await schema.validate?.({ command: 'pwd', timeout: 1 }))?.success, false)
     assert.ok(bash.toModelOutput)
     assert.deepEqual(
       await bash.toModelOutput({
@@ -111,22 +149,19 @@ describe('bash tool', { skip: process.platform === 'win32' }, () => {
     const result = await executeBash(process.cwd(), {
       command: `${shellQuote(process.execPath)} -e "process.stdout.write('x'.repeat(60 * 1024))"`
     })
-    const match = result.content.match(
-      /^\[Output truncated\. Full output: (.+)\]\n\n([\s\S]+)$/
-    )
-
-    assert.ok(match)
-    const outputPath = match[1]
-    const preview = match[2]
-    assert.ok(outputPath)
-    assert.ok(preview)
+    const match = result.content.match(/^\[Output truncated\. Full output: (.+)\]\n\n([\s\S]+)$/)
+    const outputPath = match?.[1]
 
     try {
+      assert.ok(match)
+      assert.ok(outputPath)
+      const preview = match[2]
+      assert.ok(preview)
       assert.equal(Buffer.byteLength(preview), MAX_BYTES)
       assert.equal(preview, source.slice(-MAX_BYTES))
       assert.equal(await readFile(outputPath, 'utf8'), source)
     } finally {
-      await rm(outputPath, { force: true })
+      if (outputPath) await rm(outputPath, { force: true })
     }
   })
 
@@ -141,19 +176,88 @@ describe('bash tool', { skip: process.platform === 'win32' }, () => {
         },
         controller.signal
       )
+      let pid: number | undefined
 
-      while (true) {
-        try {
-          await readFile(pidPath)
-          break
-        } catch {
-          await new Promise((resolve) => setTimeout(resolve, 10))
-        }
+      try {
+        pid = await waitForPidFile(pidPath)
+        controller.abort()
+        await assert.rejects(execution, { name: 'AbortError' })
+        await waitForProcessExit(pid)
+      } finally {
+        controller.abort()
+        await execution.catch(() => undefined)
+        if (pid !== undefined && processExists(pid)) killProcess(pid)
       }
+    })
+  })
 
-      controller.abort()
-      await assert.rejects(execution, { name: 'AbortError' })
-      await waitForProcessExit(Number(await readFile(pidPath, 'utf8')))
+  it('cancels stubborn descendants and preserves the abort reason', async () => {
+    await withTempDirectory(async (directory) => {
+      const pidPath = join(directory, 'pid')
+      const controller = new AbortController()
+      const reason = new Error('cancelled by caller')
+      const execution = executeBash(
+        directory,
+        {
+          command: `(trap '' TERM; exec >/dev/null 2>&1; while true; do sleep 1; done) & echo $! > ${shellQuote(pidPath)}; sleep 30`
+        },
+        controller.signal
+      )
+      let pid: number | undefined
+
+      try {
+        pid = await waitForPidFile(pidPath)
+        controller.abort(reason)
+        await assert.rejects(execution, (error) => error === reason)
+        await waitForProcessExit(pid)
+      } finally {
+        controller.abort(reason)
+        await execution.catch(() => undefined)
+        if (pid !== undefined && processExists(pid)) killProcess(pid)
+      }
+    })
+  })
+
+  it('cancels descendants while draining output after the shell exits', async () => {
+    await withTempDirectory(async (directory) => {
+      const shellPidPath = join(directory, 'shell-pid')
+      const childPidPath = join(directory, 'child-pid')
+      const controller = new AbortController()
+      const reason = new Error('cancelled while draining')
+      let settled = false
+      const execution = executeBash(
+        directory,
+        {
+          command: `echo $$ > ${shellQuote(shellPidPath)}; (while true; do echo tick; sleep 0.02; done) & echo $! > ${shellQuote(childPidPath)}`
+        },
+        controller.signal
+      )
+      void execution.then(
+        () => {
+          settled = true
+        },
+        () => {
+          settled = true
+        }
+      )
+      let shellPid: number | undefined
+      let childPid: number | undefined
+
+      try {
+        shellPid = await waitForPidFile(shellPidPath)
+        childPid = await waitForPidFile(childPidPath)
+        await waitForProcessExit(shellPid)
+        assert.equal(settled, false)
+
+        controller.abort(reason)
+        await assert.rejects(execution, (error) => error === reason)
+        await waitForProcessExit(childPid)
+      } finally {
+        controller.abort(reason)
+        await execution.catch(() => undefined)
+        if (shellPid !== undefined && processExists(shellPid)) killProcess(shellPid)
+        if (childPid !== undefined && processExists(childPid)) killProcess(childPid)
+      }
     })
   })
 
@@ -168,6 +272,29 @@ describe('bash tool', { skip: process.platform === 'win32' }, () => {
         { name: 'AbortError' }
       )
       await assert.rejects(readFile(outputPath))
+    })
+  })
+
+  it('reports signal termination without throwing', async () => {
+    assert.deepEqual(
+      await executeBash(process.cwd(), {
+        command: "printf 'before\\n'; kill -TERM $$"
+      }),
+      {
+        content: 'before\n\nCommand terminated by SIGTERM.'
+      }
+    )
+  })
+
+  it('throws when Bash cannot be spawned in the working directory', async () => {
+    await withTempDirectory(async (directory) => {
+      await assert.rejects(
+        runBashProcess({
+          command: ':',
+          cwd: join(directory, 'missing')
+        }),
+        { code: 'ENOENT' }
+      )
     })
   })
 
@@ -186,35 +313,53 @@ describe('bash tool', { skip: process.platform === 'win32' }, () => {
       command: 'sleep 30 & echo $!',
       cwd: process.cwd()
     })
+    const pid = Number(result.output.preview.trim())
 
-    assert.equal(result.status, 'exited')
-    await waitForProcessExit(Number(result.output.preview.trim()))
+    try {
+      assert.equal(result.status, 'exited')
+      await waitForProcessExit(pid)
+    } finally {
+      if (processExists(pid)) killProcess(pid)
+    }
   })
 
-  it('kills background descendants that ignore SIGTERM after Bash exits', async () => {
+  it(
+    'kills background descendants that ignore SIGTERM after Bash exits',
+    { timeout: 6000 },
+    async () => {
+      await withTempDirectory(async (directory) => {
+        const pidPath = join(directory, 'pid')
+        const result = await runBashProcess({
+          command: `(trap '' TERM; exec >/dev/null 2>&1; while true; do sleep 1; done) & echo $! > ${shellQuote(pidPath)}`,
+          cwd: directory
+        })
+        const pid = await waitForPidFile(pidPath)
+
+        try {
+          assert.equal(result.status, 'exited')
+          await waitForProcessExit(pid)
+        } finally {
+          if (processExists(pid)) killProcess(pid)
+        }
+      })
+    }
+  )
+
+  it('caps draining from descendants that keep writing', { timeout: 6000 }, async () => {
     await withTempDirectory(async (directory) => {
       const pidPath = join(directory, 'pid')
-      const startedAt = Date.now()
       const result = await runBashProcess({
-        command: `(trap '' TERM; exec >/dev/null 2>&1; while true; do sleep 1; done) & echo $! > ${shellQuote(pidPath)}`,
+        command: `(while true; do echo tick; sleep 0.02; done) & echo $! > ${shellQuote(pidPath)}`,
         cwd: directory
       })
+      const pid = await waitForPidFile(pidPath)
 
-      assert.equal(result.status, 'exited')
-      assert.ok(Date.now() - startedAt < 4000)
-      await waitForProcessExit(Number(await readFile(pidPath, 'utf8')))
+      try {
+        assert.equal(result.status, 'exited')
+        await waitForProcessExit(pid)
+      } finally {
+        if (processExists(pid)) killProcess(pid)
+      }
     })
-  })
-
-  it('caps draining from descendants that keep writing', async () => {
-    const startedAt = Date.now()
-    const result = await runBashProcess({
-      command: '(while true; do echo tick; sleep 0.02; done) & echo $!',
-      cwd: process.cwd()
-    })
-
-    assert.equal(result.status, 'exited')
-    assert.ok(Date.now() - startedAt < 4000)
-    await waitForProcessExit(Number(result.output.preview.split('\n')[0]))
   })
 })
