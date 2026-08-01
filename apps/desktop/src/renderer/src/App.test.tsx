@@ -3,7 +3,7 @@
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import type { AgentEvent, SessionEvent } from '../../shared/api'
+import type { AgentEvent, RestoredSession, SessionEvent, SessionSummary } from '../../shared/api'
 import App from './App'
 
 // Streamdown highlights through Shiki asynchronously, which is slow and flaky
@@ -31,6 +31,9 @@ const selectDirectory = vi.fn<() => Promise<string | null>>()
 const openSession = vi.fn<(cwd: string) => Promise<string>>()
 const promptSession = vi.fn<(input: { sessionId: string; prompt: string }) => Promise<void>>()
 const abortSession = vi.fn<(sessionId: string) => Promise<void>>()
+const listSessions = vi.fn<() => Promise<readonly SessionSummary[]>>()
+const resumeSession = vi.fn<(sessionId: string) => Promise<RestoredSession>>()
+const deleteSession = vi.fn<(sessionId: string) => Promise<void>>()
 const unsubscribe = vi.fn()
 let listeners: Array<(event: SessionEvent) => void> = []
 
@@ -48,7 +51,7 @@ async function openWorkspace(path = '/tmp/workspace'): Promise<ReturnType<typeof
   selectDirectory.mockResolvedValue(path)
   const user = userEvent.setup()
   render(<App />)
-  await user.click(screen.getByRole('button', { name: 'Open folder' }))
+  await user.click(screen.getByRole('button', { name: 'New' }))
   await screen.findByText(path)
 
   return user
@@ -67,6 +70,11 @@ beforeEach(() => {
   promptSession.mockResolvedValue(undefined)
   abortSession.mockReset()
   abortSession.mockResolvedValue(undefined)
+  listSessions.mockReset()
+  listSessions.mockResolvedValue([])
+  resumeSession.mockReset()
+  deleteSession.mockReset()
+  deleteSession.mockResolvedValue(undefined)
   unsubscribe.mockReset()
   listeners = []
   Object.defineProperty(window, 'lefa', {
@@ -76,6 +84,9 @@ beforeEach(() => {
         open: openSession,
         prompt: promptSession,
         abort: abortSession,
+        list: listSessions,
+        resume: resumeSession,
+        delete: deleteSession,
         onEvent: (listener: (event: SessionEvent) => void) => {
           listeners.push(listener)
 
@@ -100,7 +111,7 @@ describe('App', () => {
     render(<App />)
 
     expect(screen.queryByLabelText('Prompt')).toBeNull()
-    const openButton = screen.getByRole('button', { name: 'Open folder' })
+    const openButton = screen.getByRole('button', { name: 'New' })
     await user.click(openButton)
 
     expect(openButton.textContent).toBe('Opening…')
@@ -111,7 +122,7 @@ describe('App', () => {
 
     expect(openSession).toHaveBeenCalledWith('/tmp/workspace')
     expect(screen.getByLabelText('Prompt')).toBeTruthy()
-    expect(openButton.textContent).toBe('Open folder')
+    expect(openButton.textContent).toBe('New')
     expect((openButton as HTMLButtonElement).disabled).toBe(false)
   })
 
@@ -120,7 +131,7 @@ describe('App', () => {
     const user = userEvent.setup()
     render(<App />)
 
-    await user.click(screen.getByRole('button', { name: 'Open folder' }))
+    await user.click(screen.getByRole('button', { name: 'New' }))
 
     expect(selectDirectory).toHaveBeenCalledOnce()
     expect(openSession).not.toHaveBeenCalled()
@@ -132,7 +143,7 @@ describe('App', () => {
     selectDirectory.mockRejectedValueOnce(new Error('picker failed')).mockResolvedValue('/tmp/good')
     const user = userEvent.setup()
     render(<App />)
-    const openButton = screen.getByRole('button', { name: 'Open folder' })
+    const openButton = screen.getByRole('button', { name: 'New' })
 
     await user.click(openButton)
     expect((await screen.findByRole('alert')).textContent).toBe('Unable to open the folder picker.')
@@ -215,7 +226,7 @@ describe('App', () => {
     const user = userEvent.setup()
     render(<App />)
 
-    await user.click(screen.getByRole('button', { name: 'Open folder' }))
+    await user.click(screen.getByRole('button', { name: 'New' }))
     await screen.findByText('/tmp/one')
     await run(user, 'list the files')
     emit({ type: 'text', text: 'Two files.' })
@@ -229,7 +240,7 @@ describe('App', () => {
     emitFrom('session-1', { type: 'text', text: 'It holds the readme.' })
     await screen.findByText('It holds the readme.')
 
-    await user.click(screen.getByRole('button', { name: 'Open folder' }))
+    await user.click(screen.getByRole('button', { name: 'New' }))
     await screen.findByText('/tmp/two')
     expect(screen.queryByText('It holds the readme.')).toBeNull()
     expect(screen.queryByText('list the files')).toBeNull()
@@ -283,6 +294,93 @@ describe('App', () => {
 
     await run(user, 'again')
     await waitFor(() => expect(screen.queryByRole('alert')).toBeNull())
+  })
+
+  it('lists saved sessions and resumes one with its stored transcript', async () => {
+    listSessions.mockResolvedValue([
+      {
+        id: 'session-7',
+        cwd: '/tmp/other-repo',
+        createdAt: '2026-08-01T10:00:00.000Z',
+        updatedAt: new Date().toISOString(),
+        title: 'Earlier task'
+      }
+    ])
+    resumeSession.mockResolvedValue({
+      id: 'session-7',
+      cwd: '/tmp/other-repo',
+      events: [
+        { type: 'prompt', text: 'What is here?' },
+        { type: 'text', text: 'Two files.' }
+      ]
+    })
+    const user = userEvent.setup()
+    render(<App />)
+
+    await user.click(await screen.findByText('Earlier task'))
+
+    expect(resumeSession).toHaveBeenCalledWith('session-7')
+    await screen.findByText('/tmp/other-repo')
+    expect(screen.getByText('What is here?')).toBeTruthy()
+    expect(screen.getByText('Two files.')).toBeTruthy()
+    expect(screen.getByText('other-repo')).toBeTruthy()
+  })
+
+  it('refreshes the session list after a run finishes', async () => {
+    const user = await openWorkspace()
+    listSessions.mockClear()
+
+    await run(user, 'do something')
+
+    await waitFor(() => expect(listSessions).toHaveBeenCalled())
+  })
+
+  it('deletes a session and clears it when it was on screen', async () => {
+    listSessions.mockResolvedValue([
+      {
+        id: 'session-1',
+        cwd: '/tmp/workspace',
+        createdAt: '2026-08-01T10:00:00.000Z',
+        updatedAt: new Date().toISOString(),
+        title: 'Current task'
+      }
+    ])
+    const user = await openWorkspace()
+    listSessions.mockResolvedValue([])
+
+    await user.click(screen.getByRole('button', { name: 'Delete Current task' }))
+
+    expect(deleteSession).toHaveBeenCalledWith('session-1')
+    await waitFor(() => expect(screen.queryByLabelText('Prompt')).toBeNull())
+  })
+
+  it('reports a session that cannot be opened or deleted', async () => {
+    listSessions.mockResolvedValue([
+      {
+        id: 'session-7',
+        cwd: '/tmp/other',
+        createdAt: '2026-08-01T10:00:00.000Z',
+        updatedAt: new Date().toISOString(),
+        title: 'Broken'
+      }
+    ])
+    resumeSession.mockRejectedValue(new Error('gone'))
+    deleteSession.mockRejectedValue(new Error('locked'))
+    const user = userEvent.setup()
+    render(<App />)
+
+    await user.click(await screen.findByText('Broken'))
+    expect((await screen.findByRole('alert')).textContent).toBe('Unable to open that session.')
+
+    await user.click(screen.getByRole('button', { name: 'Delete Broken' }))
+    expect((await screen.findByRole('alert')).textContent).toBe('Unable to delete that session.')
+  })
+
+  it('reports a failure to load the session list', async () => {
+    listSessions.mockRejectedValue(new Error('disk gone'))
+    render(<App />)
+
+    expect((await screen.findByRole('alert')).textContent).toBe('Unable to load saved sessions.')
   })
 
   it('stops listening for session events when unmounted', async () => {

@@ -1,16 +1,21 @@
 import { app, BrowserWindow, dialog, ipcMain, type WebContents } from 'electron'
-import type { Session } from '@lefa/harness'
+import { toAgentEvents, type Session } from '@lefa/harness'
 import { join } from 'node:path'
 import {
   sessionAbortChannel,
+  sessionDeleteChannel,
   sessionEventChannel,
+  sessionListChannel,
   sessionOpenChannel,
   sessionPromptChannel,
+  sessionResumeChannel,
   workspaceChannel,
   type AgentEvent,
-  type SessionPromptInput
+  type RestoredSession,
+  type SessionPromptInput,
+  type SessionSummary
 } from '../shared/api'
-import { createWorkspaceSession } from './agent'
+import { createWorkspaceSession, sessionStore } from './agent'
 
 const sessions = new Map<string, Session>()
 
@@ -40,6 +45,34 @@ function registerIpcHandlers(): void {
 
   ipcMain.handle(sessionAbortChannel, (_event, sessionId: string) => {
     sessions.get(sessionId)?.abort()
+  })
+
+  ipcMain.handle(sessionListChannel, (): Promise<SessionSummary[]> => sessionStore.list())
+
+  ipcMain.handle(sessionResumeChannel, async (_event, sessionId): Promise<RestoredSession> => {
+    // A session already in memory may hold turns newer than the file it was
+    // loaded from, so it redraws from itself rather than from disk.
+    const open = sessions.get(sessionId)
+    if (open) return { id: open.id, cwd: open.cwd, events: toAgentEvents(open.history) }
+
+    const { meta, messages } = await sessionStore.load(sessionId)
+    const session = createWorkspaceSession(meta.cwd, {
+      id: meta.id,
+      createdAt: meta.createdAt,
+      title: meta.title,
+      messages
+    })
+    sessions.set(session.id, session)
+
+    return { id: session.id, cwd: session.cwd, events: toAgentEvents(messages) }
+  })
+
+  ipcMain.handle(sessionDeleteChannel, async (_event, sessionId: string) => {
+    // Discard rather than abort: a run still unwinding would otherwise save its
+    // last turn and bring the deleted file back.
+    sessions.get(sessionId)?.discard()
+    sessions.delete(sessionId)
+    await sessionStore.delete(sessionId)
   })
 
   ipcMain.handle(workspaceChannel, async (event) => {

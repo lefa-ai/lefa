@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { appendPrompt, reduceTranscript, type TranscriptItem } from './transcript'
+import { buildTranscript, reduceTranscript, type TranscriptItem } from './transcript'
 
 function reduceAll(events: Parameters<typeof reduceTranscript>[1][]): readonly TranscriptItem[] {
   return events.reduce<readonly TranscriptItem[]>(
@@ -100,16 +100,40 @@ describe('transcript', () => {
     expect(reduceTranscript(items, { type: 'error', message: 'Rate limited' })).toBe(items)
   })
 
-  it('appends the prompt as its own turn without merging into the reply', () => {
-    const items = appendPrompt(
-      appendPrompt([{ kind: 'text', text: 'Two files.' }], 'List them'),
-      'Read the first'
-    )
+  it('appends a prompt as its own turn without merging into the reply', () => {
+    const items = reduceAll([
+      { type: 'text', text: 'Two files.' },
+      { type: 'prompt', text: 'List them' },
+      { type: 'prompt', text: 'Read the first' }
+    ])
 
     expect(items).toEqual([
       { kind: 'text', text: 'Two files.' },
       { kind: 'user', text: 'List them' },
       { kind: 'user', text: 'Read the first' }
+    ])
+  })
+
+  it('builds a restored transcript identical to the live one', () => {
+    const events: Parameters<typeof reduceTranscript>[1][] = [
+      { type: 'prompt', text: 'List the files' },
+      { type: 'text', text: 'Let me look.' },
+      { type: 'tool-call', toolCallId: 'call-1', toolName: 'bash', input: { command: 'ls' } },
+      { type: 'tool-result', toolCallId: 'call-1', output: 'README.md' }
+    ]
+
+    expect(buildTranscript(events)).toEqual(reduceAll(events))
+    expect(buildTranscript(events)).toEqual([
+      { kind: 'user', text: 'List the files' },
+      { kind: 'text', text: 'Let me look.' },
+      {
+        kind: 'tool',
+        toolCallId: 'call-1',
+        toolName: 'bash',
+        input: '{"command":"ls"}',
+        status: 'done',
+        output: 'README.md'
+      }
     ])
   })
 

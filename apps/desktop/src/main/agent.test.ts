@@ -1,13 +1,16 @@
+import { homedir } from 'node:os'
+import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const mocks = vi.hoisted(() => ({
   anthropic: vi.fn(),
   Session: vi.fn(),
+  SessionStore: vi.fn(),
   existsSync: vi.fn()
 }))
 
 vi.mock('@ai-sdk/anthropic', () => ({ anthropic: mocks.anthropic }))
-vi.mock('@lefa/harness', () => ({ Session: mocks.Session }))
+vi.mock('@lefa/harness', () => ({ Session: mocks.Session, SessionStore: mocks.SessionStore }))
 vi.mock('node:fs', () => ({ existsSync: mocks.existsSync }))
 
 beforeEach(() => {
@@ -26,12 +29,13 @@ describe('workspace session', () => {
     mocks.anthropic.mockReturnValue(model)
     const loadEnvFile = vi.spyOn(process, 'loadEnvFile').mockImplementation(() => {})
 
-    const { createWorkspaceSession } = await import('./agent')
+    const { createWorkspaceSession, sessionStore } = await import('./agent')
     const session = createWorkspaceSession('/tmp/workspace')
 
     expect(session).toBeInstanceOf(mocks.Session)
     expect(mocks.anthropic).toHaveBeenCalledWith('claude-haiku-4-5')
-    expect(mocks.Session).toHaveBeenCalledWith(model, '/tmp/workspace')
+    expect(mocks.Session).toHaveBeenCalledWith(model, '/tmp/workspace', { store: sessionStore })
+    expect(mocks.SessionStore).toHaveBeenCalledWith(join(homedir(), '.lefa', 'sessions'))
     expect(loadEnvFile).not.toHaveBeenCalled()
   })
 

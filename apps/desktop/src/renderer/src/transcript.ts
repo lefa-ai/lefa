@@ -33,11 +33,9 @@ function updateTool(
   )
 }
 
-export function appendPrompt(
-  items: readonly TranscriptItem[],
-  text: string
-): readonly TranscriptItem[] {
-  return [...items, { kind: 'user', text }]
+/** Replays stored events, so a restored transcript matches a live one exactly. */
+export function buildTranscript(events: readonly AgentEvent[]): readonly TranscriptItem[] {
+  return events.reduce<readonly TranscriptItem[]>(reduceTranscript, [])
 }
 
 export function reduceTranscript(
@@ -45,6 +43,8 @@ export function reduceTranscript(
   event: AgentEvent
 ): readonly TranscriptItem[] {
   switch (event.type) {
+    case 'prompt':
+      return [...items, { kind: 'user', text: event.text }]
     case 'text': {
       const last = items.at(-1)
 

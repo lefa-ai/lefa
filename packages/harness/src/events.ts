@@ -1,6 +1,8 @@
 import type { TextStreamPart, ToolSet } from 'ai'
 
 export type AgentEvent =
+  /** A user turn. Produced by the UI and by replay, never by the model stream. */
+  | { type: 'prompt'; text: string }
   | { type: 'text'; text: string }
   | { type: 'tool-call'; toolCallId: string; toolName: string; input: unknown }
   | { type: 'tool-result'; toolCallId: string; output: unknown }
@@ -26,7 +28,11 @@ export function toAgentEvent<TOOLS extends ToolSet>(
         input: part.input
       }
     case 'tool-result':
-      return { type: 'tool-result', toolCallId: part.toolCallId, output: part.output }
+      return {
+        type: 'tool-result',
+        toolCallId: part.toolCallId,
+        output: part.output
+      }
     case 'tool-error':
       return {
         type: 'tool-error',

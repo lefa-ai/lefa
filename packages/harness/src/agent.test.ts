@@ -87,14 +87,18 @@ describe('agent', () => {
   it('ignores an AGENTS.md directory and an empty instructions file', async () => {
     await withWorkspace(async (cwd) => {
       await mkdir(join(cwd, 'AGENTS.md'))
-      const directoryModel = new MockLanguageModelV3({ doGenerate: textResult('Done') })
+      const directoryModel = new MockLanguageModelV3({
+        doGenerate: textResult('Done')
+      })
 
       await createAgent(directoryModel, cwd).generate({ prompt: 'Help me' })
       assert.doesNotMatch(systemText(directoryModel), /## Project Instructions/)
 
       await rm(join(cwd, 'AGENTS.md'), { recursive: true })
       await writeFile(join(cwd, 'AGENTS.md'), ' \n ')
-      const emptyModel = new MockLanguageModelV3({ doGenerate: textResult('Done') })
+      const emptyModel = new MockLanguageModelV3({
+        doGenerate: textResult('Done')
+      })
 
       await createAgent(emptyModel, cwd).generate({ prompt: 'Help me' })
       assert.doesNotMatch(systemText(emptyModel), /## Project Instructions/)
@@ -112,7 +116,10 @@ describe('agent', () => {
                 type: 'tool-call' as const,
                 toolCallId: `write-${step}`,
                 toolName: 'write',
-                input: JSON.stringify({ path: `step-${step}.txt`, content: `${step}` })
+                input: JSON.stringify({
+                  path: `step-${step}.txt`,
+                  content: `${step}`
+                })
               }
             ],
             finishReason: { unified: 'tool-calls' as const, raw: undefined },
@@ -123,7 +130,9 @@ describe('agent', () => {
         ]
       })
 
-      const result = await createAgent(model, cwd).generate({ prompt: 'Keep going' })
+      const result = await createAgent(model, cwd).generate({
+        prompt: 'Keep going'
+      })
 
       assert.equal(result.text, 'All done')
       assert.equal(
@@ -131,7 +140,10 @@ describe('agent', () => {
         toolSteps + 1,
         'the agent must not be cut off at the default 20 steps'
       )
-      assert.equal(await readFile(join(cwd, `step-${toolSteps - 1}.txt`), 'utf8'), `${toolSteps - 1}`)
+      assert.equal(
+        await readFile(join(cwd, `step-${toolSteps - 1}.txt`), 'utf8'),
+        `${toolSteps - 1}`
+      )
     })
   })
 
@@ -145,7 +157,10 @@ describe('agent', () => {
                 type: 'tool-call',
                 toolCallId: 'write-1',
                 toolName: 'write',
-                input: JSON.stringify({ path: 'created.txt', content: 'from the agent' })
+                input: JSON.stringify({
+                  path: 'created.txt',
+                  content: 'from the agent'
+                })
               }
             ],
             finishReason: { unified: 'tool-calls', raw: undefined },
@@ -156,7 +171,9 @@ describe('agent', () => {
         ]
       })
 
-      const result = await createAgent(model, cwd).generate({ prompt: 'Create the file' })
+      const result = await createAgent(model, cwd).generate({
+        prompt: 'Create the file'
+      })
 
       assert.equal(result.text, 'File created')
       assert.equal(await readFile(join(cwd, 'created.txt'), 'utf8'), 'from the agent')
@@ -179,9 +196,16 @@ describe('agent', () => {
                 type: 'tool-call',
                 toolCallId: 'write-1',
                 toolName: 'write',
-                input: JSON.stringify({ path: 'streamed.txt', content: 'from the stream' })
+                input: JSON.stringify({
+                  path: 'streamed.txt',
+                  content: 'from the stream'
+                })
               },
-              { type: 'finish', finishReason: { unified: 'tool-calls', raw: undefined }, usage }
+              {
+                type: 'finish',
+                finishReason: { unified: 'tool-calls', raw: undefined },
+                usage
+              }
             ])
           },
           {
@@ -191,13 +215,19 @@ describe('agent', () => {
               { type: 'text-delta', id: 'text-1', delta: 'File ' },
               { type: 'text-delta', id: 'text-1', delta: 'created' },
               { type: 'text-end', id: 'text-1' },
-              { type: 'finish', finishReason: { unified: 'stop', raw: undefined }, usage }
+              {
+                type: 'finish',
+                finishReason: { unified: 'stop', raw: undefined },
+                usage
+              }
             ])
           }
         ]
       })
 
-      const result = await createAgent(model, cwd).stream({ prompt: 'Create the file' })
+      const result = await createAgent(model, cwd).stream({
+        prompt: 'Create the file'
+      })
       const events: AgentEvent[] = []
 
       for await (const part of result.stream) {

@@ -93,8 +93,12 @@ const electron = vi.hoisted(() => {
 const agent = vi.hoisted(() => ({
   createWorkspaceSession: vi.fn(),
   prompt: vi.fn(),
-  abort: vi.fn()
+  abort: vi.fn(),
+  discard: vi.fn(),
+  history: [] as unknown[],
+  store: { list: vi.fn(), load: vi.fn(), delete: vi.fn() }
 }))
+const harness = vi.hoisted(() => ({ toAgentEvents: vi.fn() }))
 const environment = process.env as Record<string, string | undefined>
 
 vi.mock('electron', () => ({
@@ -103,7 +107,11 @@ vi.mock('electron', () => ({
   dialog: electron.dialog,
   ipcMain: electron.ipcMain
 }))
-vi.mock('./agent', () => ({ createWorkspaceSession: agent.createWorkspaceSession }))
+vi.mock('./agent', () => ({
+  createWorkspaceSession: agent.createWorkspaceSession,
+  sessionStore: agent.store
+}))
+vi.mock('@lefa/harness', () => ({ toAgentEvents: harness.toAgentEvents }))
 
 function sender(overrides: { destroyed?: boolean } = {}): {
   send: ReturnType<typeof vi.fn>
@@ -115,8 +123,11 @@ function sender(overrides: { destroyed?: boolean } = {}): {
 async function openSession(id = 'session-1'): Promise<string> {
   agent.createWorkspaceSession.mockReturnValue({
     id,
+    cwd: '/tmp/workspace',
+    history: agent.history,
     prompt: agent.prompt,
-    abort: agent.abort
+    abort: agent.abort,
+    discard: agent.discard
   })
   const openHandler = electron.ipcHandlers.get('session:open')
 
@@ -129,6 +140,13 @@ async function loadMain(options: { packaged?: boolean; rendererUrl?: string } = 
   agent.createWorkspaceSession.mockReset()
   agent.prompt.mockReset()
   agent.abort.mockReset()
+  agent.discard.mockReset()
+  agent.store.list.mockReset()
+  agent.store.load.mockReset()
+  agent.store.delete.mockReset()
+  agent.store.delete.mockResolvedValue(undefined)
+  harness.toAgentEvents.mockReset()
+  harness.toAgentEvents.mockReturnValue([])
   electron.app.isPackaged = options.packaged ?? false
 
   if (options.rendererUrl === undefined) {
@@ -158,6 +176,9 @@ describe('desktop main process', () => {
     expect(electron.ipcHandlers.has('session:open')).toBe(true)
     expect(electron.ipcHandlers.has('session:prompt')).toBe(true)
     expect(electron.ipcHandlers.has('session:abort')).toBe(true)
+    expect(electron.ipcHandlers.has('session:list')).toBe(true)
+    expect(electron.ipcHandlers.has('session:resume')).toBe(true)
+    expect(electron.ipcHandlers.has('session:delete')).toBe(true)
     expect(electron.ipcHandlers.has('workspace:select-directory')).toBe(true)
     expect(window?.options).toMatchObject({
       width: 1100,
@@ -289,6 +310,86 @@ describe('desktop main process', () => {
     expect(electron.dialog.showOpenDialog).toHaveBeenCalledWith(owner, {
       properties: ['openDirectory']
     })
+  })
+
+  it('lists saved sessions from the store', async () => {
+    await loadMain()
+    const summaries = [{ id: 'session-1', cwd: '/tmp/workspace', title: 'A task' }]
+    agent.store.list.mockResolvedValue(summaries)
+
+    await expect(electron.ipcHandlers.get('session:list')?.({ sender: sender() })).resolves.toEqual(
+      summaries
+    )
+  })
+
+  it('resumes a stored session and replays it as events', async () => {
+    await loadMain()
+    const messages = [{ role: 'user', content: 'Hello' }]
+    const events = [{ type: 'prompt', text: 'Hello' }]
+    agent.store.load.mockResolvedValue({
+      meta: {
+        id: 'session-9',
+        cwd: '/tmp/stored',
+        createdAt: '2026-08-01T10:00:00.000Z',
+        title: 'Stored'
+      },
+      messages
+    })
+    agent.createWorkspaceSession.mockReturnValue({
+      id: 'session-9',
+      cwd: '/tmp/stored',
+      history: messages,
+      prompt: agent.prompt,
+      abort: agent.abort
+    })
+    harness.toAgentEvents.mockReturnValue(events)
+
+    const restored = await electron.ipcHandlers.get('session:resume')?.(
+      { sender: sender() },
+      'session-9'
+    )
+
+    expect(agent.createWorkspaceSession).toHaveBeenCalledWith('/tmp/stored', {
+      id: 'session-9',
+      createdAt: '2026-08-01T10:00:00.000Z',
+      title: 'Stored',
+      messages
+    })
+    expect(restored).toEqual({ id: 'session-9', cwd: '/tmp/stored', events })
+  })
+
+  it('redraws an already-open session from memory rather than from disk', async () => {
+    await loadMain()
+    agent.history = [{ role: 'user', content: 'In memory' }]
+    const sessionId = await openSession()
+    harness.toAgentEvents.mockReturnValue([{ type: 'prompt', text: 'In memory' }])
+
+    const restored = await electron.ipcHandlers.get('session:resume')?.(
+      { sender: sender() },
+      sessionId
+    )
+
+    expect(agent.store.load).not.toHaveBeenCalled()
+    expect(harness.toAgentEvents).toHaveBeenCalledWith(agent.history)
+    expect(restored).toEqual({
+      id: sessionId,
+      cwd: '/tmp/workspace',
+      events: [{ type: 'prompt', text: 'In memory' }]
+    })
+    agent.history = []
+  })
+
+  it('stops and forgets a session when it is deleted', async () => {
+    await loadMain()
+    const sessionId = await openSession()
+
+    await electron.ipcHandlers.get('session:delete')?.({ sender: sender() }, sessionId)
+
+    expect(agent.discard).toHaveBeenCalledOnce()
+    expect(agent.store.delete).toHaveBeenCalledWith(sessionId)
+    await expect(
+      electron.ipcHandlers.get('session:prompt')?.({ sender: sender() }, { sessionId, prompt: 'Hi' })
+    ).rejects.toThrow('That session is no longer open.')
   })
 
   it('creates a window on activation only when none remain', async () => {
