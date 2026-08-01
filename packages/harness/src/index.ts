@@ -3,5 +3,12 @@ export { createBashTool, type BashInput, type BashOutput, type BashTool } from '
 export { createEditTool, type EditInput, type EditOutput, type EditTool } from './edit.ts'
 export { toAgentEvent, type AgentEvent } from './events.ts'
 export { createReadTool, type ReadInput, type ReadOutput, type ReadTool } from './read.ts'
-export { Session } from './session.ts'
+export { toAgentEvents } from './replay.ts'
+export {
+  SessionStore,
+  type SessionMeta,
+  type SessionRecord,
+  type SessionSummary
+} from './session-store.ts'
+export { Session, type SessionOptions } from './session.ts'
 export { createWriteTool, type WriteInput, type WriteOutput, type WriteTool } from './write.ts'
