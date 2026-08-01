@@ -2,7 +2,10 @@
   "type": "module",
   "name": "@lefa/harness",
   "private": true,
-  "exports": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts",
+    "./events": "./src/events.ts"
+  },
   "devDependencies": {
     "@types/node": "^24.13.3",
     "typescript": "^6.0.3"
