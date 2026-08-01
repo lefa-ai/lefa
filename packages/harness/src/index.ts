@@ -8,6 +8,7 @@ import { createWriteTool, type WriteTool } from './write.ts'
 
 export { createBashTool, type BashInput, type BashOutput, type BashTool } from './bash.ts'
 export { createEditTool, type EditInput, type EditOutput, type EditTool } from './edit.ts'
+export { toAgentEvent, type AgentEvent } from './events.ts'
 export { createReadTool, type ReadInput, type ReadOutput, type ReadTool } from './read.ts'
 export { createWriteTool, type WriteInput, type WriteOutput, type WriteTool } from './write.ts'
 
