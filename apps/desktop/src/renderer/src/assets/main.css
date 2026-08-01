@@ -110,6 +110,22 @@ p[role='alert'] {
   white-space: pre-wrap;
 }
 
+.user {
+  align-self: flex-end;
+  max-width: 85%;
+  padding: 0.5rem 0.75rem;
+  border-radius: 0.5rem;
+  background: #27272a;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.notice {
+  color: #71717a;
+  font-family: 'Geist Mono', ui-monospace, monospace;
+  font-size: 0.8125rem;
+}
+
 .tool {
   padding: 0.75rem;
   border: 1px solid #27272a;
@@ -124,6 +140,10 @@ p[role='alert'] {
 
 .tool[data-status='error'] {
   border-left-color: #ef4444;
+}
+
+.tool[data-status='aborted'] {
+  border-left-color: #71717a;
 }
 
 .tool-call {
