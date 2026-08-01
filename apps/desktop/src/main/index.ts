@@ -1,24 +1,45 @@
-import { app, BrowserWindow, dialog, ipcMain } from 'electron'
-import { toAgentEvent } from '@lefa/harness'
+import { app, BrowserWindow, dialog, ipcMain, type WebContents } from 'electron'
+import type { Session } from '@lefa/harness'
 import { join } from 'node:path'
 import {
-  agentEventChannel,
-  agentPromptChannel,
+  sessionAbortChannel,
+  sessionEventChannel,
+  sessionOpenChannel,
+  sessionPromptChannel,
   workspaceChannel,
-  type AgentPromptInput
+  type AgentEvent,
+  type SessionPromptInput
 } from '../shared/api'
-import { createWorkspaceAgent } from './agent'
+import { createWorkspaceSession } from './agent'
+
+const sessions = new Map<string, Session>()
+
+function send(sender: WebContents, sessionId: string, event: AgentEvent): void {
+  if (sender.isDestroyed()) return
+
+  sender.send(sessionEventChannel, { sessionId, event })
+}
 
 function registerIpcHandlers(): void {
-  ipcMain.handle(agentPromptChannel, async (event, input: AgentPromptInput) => {
-    const agent = createWorkspaceAgent(input.cwd)
-    const result = await agent.stream({ prompt: input.prompt })
+  ipcMain.handle(sessionOpenChannel, (_event, cwd: string) => {
+    const session = createWorkspaceSession(cwd)
+    sessions.set(session.id, session)
 
-    for await (const part of result.stream) {
-      const agentEvent = toAgentEvent(part)
+    return session.id
+  })
 
-      if (agentEvent) event.sender.send(agentEventChannel, agentEvent)
+  ipcMain.handle(sessionPromptChannel, async (event, input: SessionPromptInput) => {
+    const session = sessions.get(input.sessionId)
+
+    if (!session) throw new Error('That session is no longer open.')
+
+    for await (const agentEvent of session.prompt(input.prompt)) {
+      send(event.sender, input.sessionId, agentEvent)
     }
+  })
+
+  ipcMain.handle(sessionAbortChannel, (_event, sessionId: string) => {
+    sessions.get(sessionId)?.abort()
   })
 
   ipcMain.handle(workspaceChannel, async (event) => {
