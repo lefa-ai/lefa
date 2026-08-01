@@ -13,7 +13,9 @@
 
 ## What's here today
 
-- [`site/`](site/) — the [lefa.ai](https://lefa.ai) landing page
+- [`apps/desktop/`](apps/desktop/) — the Electron desktop app
+- [`apps/site/`](apps/site/) — the [lefa.ai](https://lefa.ai) landing page and waitlist API
+- [`packages/harness/`](packages/harness/) — the TypeScript agent harness
 
 ## Follow along
 
