@@ -324,6 +324,39 @@ describe('session', () => {
     })
   })
 
+  it('writes nothing more once the session is discarded', { timeout: 10_000 }, async () => {
+    await withWorkspace(async (cwd) => {
+      const root = await mkdtemp(join(tmpdir(), 'lefa-discard-'))
+
+      try {
+        const store = new SessionStore(root)
+        const interrupted = openResponse()
+        const model = new MockLanguageModelV3({ doStream: [interrupted.response] })
+        const session = new Session(model, cwd, { store })
+
+        interrupted.push({ type: 'stream-start', warnings: [] })
+        interrupted.push({ type: 'text-start', id: 'text-1' })
+        interrupted.push({ type: 'text-delta', id: 'text-1', delta: 'Working' })
+
+        for await (const event of session.prompt('Start something')) {
+          if (event.type !== 'text') continue
+
+          // Stands in for deleting the session while its run is still going.
+          session.discard()
+          interrupted.push({ type: 'text-delta', id: 'text-1', delta: ' on it' })
+        }
+
+        assert.deepEqual(
+          await store.list(),
+          [],
+          'a discarded session must not resurrect its file'
+        )
+      } finally {
+        await rm(root, { recursive: true, force: true })
+      }
+    })
+  })
+
   it('reports a failure to save without losing the turn', async () => {
     await withWorkspace(async (cwd) => {
       const store = new SessionStore('/dev/null/not-a-directory')
