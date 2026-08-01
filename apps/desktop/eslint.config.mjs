@@ -7,7 +7,13 @@ import eslintPluginReactRefresh from 'eslint-plugin-react-refresh'
 import tseslint from 'typescript-eslint'
 
 export default defineConfig(
-  globalIgnores(['**/node_modules/**', '**/dist/**', '**/out/**']),
+  globalIgnores([
+    '**/node_modules/**',
+    '**/dist/**',
+    '**/out/**',
+    // Vendored shadcn/ui components — kept as generated so the CLI can update them.
+    'src/renderer/src/components/ui/**'
+  ]),
   eslint.configs.recommended,
   tseslint.configs.recommended,
   {
