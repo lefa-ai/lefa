@@ -94,6 +94,7 @@ const agent = vi.hoisted(() => ({
   createWorkspaceSession: vi.fn(),
   prompt: vi.fn(),
   abort: vi.fn(),
+  discard: vi.fn(),
   history: [] as unknown[],
   store: { list: vi.fn(), load: vi.fn(), delete: vi.fn() }
 }))
@@ -125,7 +126,8 @@ async function openSession(id = 'session-1'): Promise<string> {
     cwd: '/tmp/workspace',
     history: agent.history,
     prompt: agent.prompt,
-    abort: agent.abort
+    abort: agent.abort,
+    discard: agent.discard
   })
   const openHandler = electron.ipcHandlers.get('session:open')
 
@@ -138,6 +140,7 @@ async function loadMain(options: { packaged?: boolean; rendererUrl?: string } = 
   agent.createWorkspaceSession.mockReset()
   agent.prompt.mockReset()
   agent.abort.mockReset()
+  agent.discard.mockReset()
   agent.store.list.mockReset()
   agent.store.load.mockReset()
   agent.store.delete.mockReset()
@@ -382,7 +385,7 @@ describe('desktop main process', () => {
 
     await electron.ipcHandlers.get('session:delete')?.({ sender: sender() }, sessionId)
 
-    expect(agent.abort).toHaveBeenCalledOnce()
+    expect(agent.discard).toHaveBeenCalledOnce()
     expect(agent.store.delete).toHaveBeenCalledWith(sessionId)
     await expect(
       electron.ipcHandlers.get('session:prompt')?.({ sender: sender() }, { sessionId, prompt: 'Hi' })
