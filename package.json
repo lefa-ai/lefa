@@ -1,18 +1,13 @@
 {
-  "name": "lefa-site",
+  "name": "lefa",
   "private": true,
-  "type": "module",
-  "description": "Lefa landing page + waitlist API (Vercel).",
+  "description": "Lefa — an open operating environment for AI software engineers.",
   "scripts": {
-    "test": "vitest run --config vitest.config.js",
-    "test:coverage": "vitest run --coverage --config vitest.config.js"
-  },
-  "dependencies": {
-    "@upstash/redis": "^1.34.3"
-  },
-  "devDependencies": {
-    "@vitest/coverage-v8": "^4.1.10",
-    "jsdom": "^30.0.1",
-    "vitest": "^4.1.10"
+    "dev": "pnpm --filter @lefa/desktop dev",
+    "build": "pnpm --filter @lefa/desktop build",
+    "test": "pnpm -r test",
+    "test:coverage": "pnpm -r test:coverage",
+    "typecheck": "pnpm -r typecheck",
+    "lint": "pnpm -r lint"
   }
 }
