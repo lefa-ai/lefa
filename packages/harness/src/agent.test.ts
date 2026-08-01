@@ -4,7 +4,8 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, it } from 'node:test'
 import { convertArrayToReadableStream, MockLanguageModelV3 } from 'ai/test'
-import { createAgent, createTools, toAgentEvent, type AgentEvent } from './index.ts'
+import { createAgent, createTools } from './agent.ts'
+import { toAgentEvent, type AgentEvent } from './events.ts'
 
 const usage = {
   inputTokens: {
@@ -47,7 +48,7 @@ function systemText(model: MockLanguageModelV3): string {
   return message.content as string
 }
 
-describe('harness', () => {
+describe('agent', () => {
   it('creates the complete tool set', () => {
     const tools = createTools('/tmp/workspace')
 
