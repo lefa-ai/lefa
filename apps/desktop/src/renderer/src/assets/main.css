@@ -79,20 +79,8 @@ textarea {
   font: inherit;
 }
 
-pre {
-  width: 100%;
-  max-height: 20rem;
-  margin: 0;
-  overflow: auto;
-  padding: 1rem;
-  border: 1px solid #27272a;
-  border-radius: 0.5rem;
-  background: #18181b;
-  white-space: pre-wrap;
-}
-
 code,
-p {
+p[role='alert'] {
   margin: 0;
   color: #a1a1aa;
   font-family: 'Geist Mono', ui-monospace, monospace;
@@ -103,4 +91,66 @@ p {
 
 p[role='alert'] {
   color: #ef4444;
+}
+
+.transcript {
+  display: flex;
+  width: 100%;
+  max-height: 24rem;
+  flex-direction: column;
+  gap: 0.75rem;
+  margin: 0;
+  overflow-y: auto;
+  padding: 0;
+  list-style: none;
+}
+
+.message {
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.tool {
+  padding: 0.75rem;
+  border: 1px solid #27272a;
+  border-left: 2px solid #a3e635;
+  border-radius: 0.5rem;
+  background: #18181b;
+}
+
+.tool[data-status='done'] {
+  border-left-color: #22c55e;
+}
+
+.tool[data-status='error'] {
+  border-left-color: #ef4444;
+}
+
+.tool-call {
+  display: flex;
+  margin: 0;
+  gap: 0.5rem;
+  align-items: baseline;
+  font-family: 'Geist Mono', ui-monospace, monospace;
+  font-size: 0.8125rem;
+}
+
+.tool-name {
+  color: #a3e635;
+  font-weight: 600;
+}
+
+.tool-input {
+  color: #71717a;
+  overflow-wrap: anywhere;
+}
+
+.tool-output {
+  max-height: 10rem;
+  margin: 0.5rem 0 0;
+  overflow: auto;
+  color: #a1a1aa;
+  font-family: 'Geist Mono', ui-monospace, monospace;
+  font-size: 0.8125rem;
+  white-space: pre-wrap;
 }
