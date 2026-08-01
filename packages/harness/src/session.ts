@@ -36,6 +36,7 @@ export class Session {
   private readonly messages: ModelMessage[]
   private readonly store: SessionStore | undefined
   private controller: AbortController | undefined
+  private discarded = false
 
   constructor(model: LanguageModel, cwd: string, options: SessionOptions = {}) {
     this.id = options.id ?? randomUUID()
@@ -107,6 +108,8 @@ export class Session {
       this.controller = undefined
     }
 
+    if (this.discarded) return
+
     // The turn already succeeded, so failing to save it must not fail the turn.
     try {
       await this.store?.append(this.meta, turn)
@@ -117,5 +120,16 @@ export class Session {
 
   abort(): void {
     this.controller?.abort()
+  }
+
+  /**
+   * Retires the session for good.
+   *
+   * A run that is still unwinding would otherwise save its final turn after the
+   * session was deleted, recreating the very file that was just removed.
+   */
+  discard(): void {
+    this.discarded = true
+    this.abort()
   }
 }
