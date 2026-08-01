@@ -45,6 +45,23 @@ describe('preload bridge', () => {
     expect(electron.invoke).toHaveBeenCalledWith('session:abort', 'session-1')
   })
 
+  it('exposes session history calls through the expected IPC channels', async () => {
+    const api = exposedApi()
+
+    electron.invoke.mockResolvedValueOnce([])
+    await expect(api.session.list()).resolves.toEqual([])
+    expect(electron.invoke).toHaveBeenCalledWith('session:list')
+
+    const restored = { id: 'session-1', cwd: '/tmp/workspace', events: [] }
+    electron.invoke.mockResolvedValueOnce(restored)
+    await expect(api.session.resume('session-1')).resolves.toEqual(restored)
+    expect(electron.invoke).toHaveBeenCalledWith('session:resume', 'session-1')
+
+    electron.invoke.mockResolvedValueOnce(undefined)
+    await expect(api.session.delete('session-1')).resolves.toBeUndefined()
+    expect(electron.invoke).toHaveBeenCalledWith('session:delete', 'session-1')
+  })
+
   it('forwards session events to the listener and unsubscribes on cleanup', () => {
     const api = exposedApi()
     const listener = vi.fn()
