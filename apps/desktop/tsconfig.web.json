@@ -9,6 +9,9 @@
     "lib": ["ESNext", "DOM", "DOM.Iterable"],
     "jsx": "react-jsx",
     "skipLibCheck": true,
-    "types": ["vite/client"]
+    "types": ["vite/client"],
+    "paths": {
+      "@/*": ["./src/renderer/src/*"]
+    }
   }
 }
