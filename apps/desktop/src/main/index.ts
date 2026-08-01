@@ -68,7 +68,9 @@ function registerIpcHandlers(): void {
   })
 
   ipcMain.handle(sessionDeleteChannel, async (_event, sessionId: string) => {
-    sessions.get(sessionId)?.abort()
+    // Discard rather than abort: a run still unwinding would otherwise save its
+    // last turn and bring the deleted file back.
+    sessions.get(sessionId)?.discard()
     sessions.delete(sessionId)
     await sessionStore.delete(sessionId)
   })
