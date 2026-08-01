@@ -91,8 +91,9 @@ const electron = vi.hoisted(() => {
 })
 
 const agent = vi.hoisted(() => ({
-  createWorkspaceAgent: vi.fn(),
-  stream: vi.fn()
+  createWorkspaceSession: vi.fn(),
+  prompt: vi.fn(),
+  abort: vi.fn()
 }))
 const environment = process.env as Record<string, string | undefined>
 
@@ -102,14 +103,32 @@ vi.mock('electron', () => ({
   dialog: electron.dialog,
   ipcMain: electron.ipcMain
 }))
-vi.mock('./agent', () => ({ createWorkspaceAgent: agent.createWorkspaceAgent }))
+vi.mock('./agent', () => ({ createWorkspaceSession: agent.createWorkspaceSession }))
+
+function sender(overrides: { destroyed?: boolean } = {}): {
+  send: ReturnType<typeof vi.fn>
+  isDestroyed: () => boolean
+} {
+  return { send: vi.fn(), isDestroyed: () => overrides.destroyed ?? false }
+}
+
+async function openSession(id = 'session-1'): Promise<string> {
+  agent.createWorkspaceSession.mockReturnValue({
+    id,
+    prompt: agent.prompt,
+    abort: agent.abort
+  })
+  const openHandler = electron.ipcHandlers.get('session:open')
+
+  return (await openHandler?.({ sender: sender() }, '/tmp/workspace')) as string
+}
 
 async function loadMain(options: { packaged?: boolean; rendererUrl?: string } = {}): Promise<void> {
   vi.resetModules()
   electron.reset()
-  agent.createWorkspaceAgent.mockReset()
-  agent.stream.mockReset()
-  agent.createWorkspaceAgent.mockReturnValue({ stream: agent.stream })
+  agent.createWorkspaceSession.mockReset()
+  agent.prompt.mockReset()
+  agent.abort.mockReset()
   electron.app.isPackaged = options.packaged ?? false
 
   if (options.rendererUrl === undefined) {
@@ -136,7 +155,9 @@ describe('desktop main process', () => {
     await loadMain({ rendererUrl: 'http://localhost:5173' })
     const window = electron.windows[0]
 
-    expect(electron.ipcHandlers.has('agent:prompt')).toBe(true)
+    expect(electron.ipcHandlers.has('session:open')).toBe(true)
+    expect(electron.ipcHandlers.has('session:prompt')).toBe(true)
+    expect(electron.ipcHandlers.has('session:abort')).toBe(true)
     expect(electron.ipcHandlers.has('workspace:select-directory')).toBe(true)
     expect(window?.options).toMatchObject({
       width: 900,
@@ -159,12 +180,12 @@ describe('desktop main process', () => {
     expect(openHandler()).toEqual({ action: 'deny' })
   })
 
-  it('streams renderable agent events to the requesting window', async () => {
+  it('opens a session per workspace and streams its events to the requesting window', async () => {
     await loadMain()
-    agent.stream.mockResolvedValue({
-      stream: (async function* () {
-        yield { type: 'text-start', id: 'text-1' }
-        yield { type: 'text-delta', id: 'text-1', text: 'Hello' }
+    const sessionId = await openSession()
+    agent.prompt.mockReturnValue(
+      (async function* () {
+        yield { type: 'text', text: 'Hello' }
         yield {
           type: 'tool-call',
           toolCallId: 'call-1',
@@ -172,22 +193,72 @@ describe('desktop main process', () => {
           input: { command: 'ls' }
         }
       })()
-    })
-    const send = vi.fn()
-    const promptHandler = electron.ipcHandlers.get('agent:prompt')
+    )
+    const target = sender()
+    const promptHandler = electron.ipcHandlers.get('session:prompt')
+
+    expect(sessionId).toBe('session-1')
+    expect(agent.createWorkspaceSession).toHaveBeenCalledWith('/tmp/workspace')
 
     await expect(
-      promptHandler?.({ sender: { send } }, { cwd: '/tmp/workspace', prompt: 'Help me' })
+      promptHandler?.({ sender: target }, { sessionId, prompt: 'Help me' })
     ).resolves.toBeUndefined()
-    expect(agent.createWorkspaceAgent).toHaveBeenCalledWith('/tmp/workspace')
-    expect(agent.stream).toHaveBeenCalledWith({ prompt: 'Help me' })
-    expect(send.mock.calls).toEqual([
-      ['agent:event', { type: 'text', text: 'Hello' }],
+    expect(agent.prompt).toHaveBeenCalledWith('Help me')
+    expect(target.send.mock.calls).toEqual([
+      ['session:event', { sessionId, event: { type: 'text', text: 'Hello' } }],
       [
-        'agent:event',
-        { type: 'tool-call', toolCallId: 'call-1', toolName: 'bash', input: { command: 'ls' } }
+        'session:event',
+        {
+          sessionId,
+          event: {
+            type: 'tool-call',
+            toolCallId: 'call-1',
+            toolName: 'bash',
+            input: { command: 'ls' }
+          }
+        }
       ]
     ])
+  })
+
+  it('drops events once the requesting window is gone', async () => {
+    await loadMain()
+    const sessionId = await openSession()
+    agent.prompt.mockReturnValue(
+      (async function* () {
+        yield { type: 'text', text: 'Hello' }
+      })()
+    )
+    const target = sender({ destroyed: true })
+
+    await electron.ipcHandlers.get('session:prompt')?.(
+      { sender: target },
+      { sessionId, prompt: 'Help me' }
+    )
+
+    expect(target.send).not.toHaveBeenCalled()
+  })
+
+  it('rejects a prompt for a session that is not open', async () => {
+    await loadMain()
+    const promptHandler = electron.ipcHandlers.get('session:prompt')
+
+    await expect(
+      promptHandler?.({ sender: sender() }, { sessionId: 'missing', prompt: 'Help me' })
+    ).rejects.toThrow('That session is no longer open.')
+    expect(agent.prompt).not.toHaveBeenCalled()
+  })
+
+  it('interrupts the addressed session and ignores unknown ones', async () => {
+    await loadMain()
+    const sessionId = await openSession()
+    const abortHandler = electron.ipcHandlers.get('session:abort')
+
+    expect(abortHandler?.({ sender: sender() }, 'missing')).toBeUndefined()
+    expect(agent.abort).not.toHaveBeenCalled()
+
+    abortHandler?.({ sender: sender() }, sessionId)
+    expect(agent.abort).toHaveBeenCalledOnce()
   })
 
   it('returns null when workspace selection has no owning window', async () => {
