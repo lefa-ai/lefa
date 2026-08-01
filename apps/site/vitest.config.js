@@ -2,7 +2,7 @@ import { defineConfig } from 'vitest/config'
 
 export default defineConfig({
   test: {
-    include: ['api/**/*.test.js', 'site/**/*.test.js'],
+    include: ['api/**/*.test.js', 'public/**/*.test.js'],
     coverage: {
       include: ['api/waitlist.js'],
       thresholds: {
