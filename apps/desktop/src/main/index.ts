@@ -57,8 +57,10 @@ function registerIpcHandlers(): void {
 
 function createWindow(): void {
   const mainWindow = new BrowserWindow({
-    width: 900,
-    height: 670,
+    width: 1100,
+    height: 760,
+    minWidth: 640,
+    minHeight: 480,
     show: false,
     autoHideMenuBar: true,
     backgroundColor: '#09090b',
