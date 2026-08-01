@@ -1,4 +1,8 @@
-import { useEffect, useState, type FormEvent } from 'react'
+import { FolderOpenIcon, SquareIcon } from 'lucide-react'
+import { useEffect, useState, type FormEvent, type KeyboardEvent } from 'react'
+import { Button } from '@/components/ui/button'
+import { Textarea } from '@/components/ui/textarea'
+import { Conversation } from './components/conversation'
 import { appendPrompt, reduceTranscript, type TranscriptItem } from './transcript'
 
 function App(): React.JSX.Element {
@@ -45,7 +49,7 @@ function App(): React.JSX.Element {
     event.preventDefault()
 
     const text = prompt.trim()
-    if (!sessionId || !text) return
+    if (!sessionId || !text || isRunning) return
 
     setIsRunning(true)
     setItems((current) => appendPrompt(current, text))
@@ -71,53 +75,87 @@ function App(): React.JSX.Element {
     }
   }
 
+  const submitOnEnter = (event: KeyboardEvent<HTMLTextAreaElement>): void => {
+    if (event.key !== 'Enter' || event.shiftKey) return
+
+    event.preventDefault()
+    event.currentTarget.form?.requestSubmit()
+  }
+
   return (
-    <main>
-      <h1>Lefa</h1>
-      <button type="button" disabled={isSelecting} onClick={selectWorkspace}>
-        {isSelecting ? 'Opening…' : 'Open folder'}
-      </button>
-      {workspacePath && <code aria-live="polite">{workspacePath}</code>}
-      {items.length > 0 && (
-        <ol className="transcript" aria-label="Transcript" aria-live="polite">
-          {items.map((item, index) =>
-            item.kind === 'tool' ? (
-              <li key={item.toolCallId} className="tool" data-status={item.status}>
-                <p className="tool-call">
-                  <span className="tool-name">{item.toolName}</span>
-                  <span className="tool-input">{item.input}</span>
-                </p>
-                {item.output && <pre className="tool-output">{item.output}</pre>}
-              </li>
-            ) : (
-              <li key={index} className={item.kind === 'text' ? 'message' : item.kind}>
-                {item.text}
-              </li>
-            )
+    <div className="flex h-full flex-col">
+      <header className="flex h-12 shrink-0 items-center gap-3 border-b border-border px-4">
+        <span className="font-mono text-[10.5px] font-medium tracking-[0.09em] text-muted-foreground uppercase">
+          Lefa
+        </span>
+        {workspacePath && (
+          <code aria-live="polite" className="min-w-0 flex-1 truncate font-mono text-xs text-faint">
+            {workspacePath}
+          </code>
+        )}
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          className="ms-auto"
+          disabled={isSelecting}
+          onClick={selectWorkspace}
+        >
+          <FolderOpenIcon />
+          {isSelecting ? 'Opening…' : 'Open folder'}
+        </Button>
+      </header>
+
+      {sessionId ? (
+        <>
+          <div className="min-h-0 flex-1">
+            <Conversation items={items} isRunning={isRunning} />
+          </div>
+
+          <div className="shrink-0 px-6 pb-6">
+            <form onSubmit={runAgent} className="mx-auto w-full max-w-3xl">
+              <div className="rounded-xl border border-border bg-card p-2 focus-within:border-ring">
+                <Textarea
+                  aria-label="Prompt"
+                  placeholder="Ask Lefa to work in this folder"
+                  value={prompt}
+                  rows={2}
+                  onChange={(event) => setPrompt(event.target.value)}
+                  onKeyDown={submitOnEnter}
+                  className="max-h-56 min-h-0 resize-none border-0 bg-transparent shadow-none focus-visible:ring-0 dark:bg-transparent"
+                />
+                <div className="flex justify-end px-1 pb-1">
+                  {isRunning ? (
+                    <Button type="button" size="sm" variant="secondary" onClick={stopAgent}>
+                      <SquareIcon />
+                      Stop
+                    </Button>
+                  ) : (
+                    <Button type="submit" size="sm" disabled={!prompt.trim()}>
+                      Run
+                    </Button>
+                  )}
+                </div>
+              </div>
+            </form>
+            {error && (
+              <p role="alert" className="mx-auto mt-2 w-full max-w-3xl text-xs text-destructive">
+                {error}
+              </p>
+            )}
+          </div>
+        </>
+      ) : (
+        <div className="flex flex-1 flex-col items-center justify-center gap-3 text-center">
+          <p className="text-sm text-muted-foreground">Open a folder to start working.</p>
+          {error && (
+            <p role="alert" className="text-xs text-destructive">
+              {error}
+            </p>
           )}
-        </ol>
+        </div>
       )}
-      {sessionId && (
-        <form onSubmit={runAgent}>
-          <textarea
-            aria-label="Prompt"
-            placeholder="Ask Lefa to work in this folder"
-            value={prompt}
-            onChange={(event) => setPrompt(event.target.value)}
-          />
-          {isRunning ? (
-            <button type="button" onClick={stopAgent}>
-              Stop
-            </button>
-          ) : (
-            <button type="submit" disabled={!prompt.trim()}>
-              Run
-            </button>
-          )}
-        </form>
-      )}
-      {error && <p role="alert">{error}</p>}
-    </main>
+    </div>
   )
 }
 
