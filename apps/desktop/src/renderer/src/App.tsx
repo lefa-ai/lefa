@@ -1,12 +1,22 @@
-import { useState, type FormEvent } from 'react'
+import { useEffect, useState, type FormEvent } from 'react'
+import { reduceTranscript, type TranscriptItem } from './transcript'
 
 function App(): React.JSX.Element {
   const [workspacePath, setWorkspacePath] = useState<string | null>(null)
   const [prompt, setPrompt] = useState('')
-  const [answer, setAnswer] = useState<string | null>(null)
+  const [items, setItems] = useState<readonly TranscriptItem[]>([])
   const [isSelecting, setIsSelecting] = useState(false)
   const [isRunning, setIsRunning] = useState(false)
   const [error, setError] = useState<string | null>(null)
+
+  useEffect(
+    () =>
+      window.lefa.agent.onEvent((event) => {
+        if (event.type === 'error') setError(event.message)
+        else setItems((current) => reduceTranscript(current, event))
+      }),
+    []
+  )
 
   const selectWorkspace = async (): Promise<void> => {
     setIsSelecting(true)
@@ -17,7 +27,7 @@ function App(): React.JSX.Element {
 
       if (path) {
         setWorkspacePath(path)
-        setAnswer(null)
+        setItems([])
       }
     } catch {
       setError('Unable to open the folder picker.')
@@ -33,11 +43,11 @@ function App(): React.JSX.Element {
     if (!workspacePath || !text) return
 
     setIsRunning(true)
-    setAnswer(null)
+    setItems([])
     setError(null)
 
     try {
-      setAnswer(await window.lefa.agent.prompt({ cwd: workspacePath, prompt: text }))
+      await window.lefa.agent.prompt({ cwd: workspacePath, prompt: text })
     } catch {
       setError('Unable to run the agent.')
     } finally {
@@ -65,7 +75,25 @@ function App(): React.JSX.Element {
           </button>
         </form>
       )}
-      {answer && <pre aria-live="polite">{answer}</pre>}
+      {items.length > 0 && (
+        <ol className="transcript" aria-label="Transcript" aria-live="polite">
+          {items.map((item, index) =>
+            item.kind === 'text' ? (
+              <li key={index} className="message">
+                {item.text}
+              </li>
+            ) : (
+              <li key={item.toolCallId} className="tool" data-status={item.status}>
+                <p className="tool-call">
+                  <span className="tool-name">{item.toolName}</span>
+                  <span className="tool-input">{item.input}</span>
+                </p>
+                {item.output && <pre className="tool-output">{item.output}</pre>}
+              </li>
+            )
+          )}
+        </ol>
+      )}
       {error && <p role="alert">{error}</p>}
     </main>
   )

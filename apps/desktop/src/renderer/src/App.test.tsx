@@ -1,8 +1,9 @@
 // @vitest-environment jsdom
 
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import type { AgentEvent } from '../../shared/api'
 import App from './App'
 
 function deferred<T>() {
@@ -17,15 +18,42 @@ function deferred<T>() {
 }
 
 const selectDirectory = vi.fn<() => Promise<string | null>>()
-const promptAgent = vi.fn<(input: { cwd: string; prompt: string }) => Promise<string>>()
+const promptAgent = vi.fn<(input: { cwd: string; prompt: string }) => Promise<void>>()
+const unsubscribe = vi.fn()
+let listeners: Array<(event: AgentEvent) => void> = []
+
+function emit(...events: AgentEvent[]): void {
+  act(() => {
+    for (const event of events) for (const listener of listeners) listener(event)
+  })
+}
+
+async function openWorkspace(path = '/tmp/workspace'): Promise<ReturnType<typeof userEvent.setup>> {
+  selectDirectory.mockResolvedValue(path)
+  const user = userEvent.setup()
+  render(<App />)
+  await user.click(screen.getByRole('button', { name: 'Open folder' }))
+  await screen.findByText(path)
+
+  return user
+}
 
 beforeEach(() => {
   selectDirectory.mockReset()
   promptAgent.mockReset()
+  promptAgent.mockResolvedValue(undefined)
+  unsubscribe.mockReset()
+  listeners = []
   Object.defineProperty(window, 'lefa', {
     configurable: true,
     value: {
-      agent: { prompt: promptAgent },
+      agent: {
+        prompt: promptAgent,
+        onEvent: (listener: (event: AgentEvent) => void) => {
+          listeners.push(listener)
+          return unsubscribe
+        }
+      },
       workspace: { selectDirectory }
     }
   })
@@ -82,54 +110,76 @@ describe('App', () => {
     expect(screen.queryByRole('alert')).toBeNull()
   })
 
-  it('trims the prompt, shows progress, and renders the answer', async () => {
-    selectDirectory.mockResolvedValue('/tmp/workspace')
-    const response = deferred<string>()
-    promptAgent.mockReturnValue(response.promise)
-    const user = userEvent.setup()
-    render(<App />)
+  it('renders streamed text and tool activity while the run is in flight', async () => {
+    const run = deferred<void>()
+    promptAgent.mockReturnValue(run.promise)
+    const user = await openWorkspace()
 
-    await user.click(screen.getByRole('button', { name: 'Open folder' }))
-    await user.type(screen.getByLabelText('Prompt'), '  explain this  ')
+    await user.type(screen.getByLabelText('Prompt'), '  list the files  ')
     const runButton = screen.getByRole('button', { name: 'Run' })
     await user.click(runButton)
 
     expect(promptAgent).toHaveBeenCalledWith({
       cwd: '/tmp/workspace',
-      prompt: 'explain this'
+      prompt: 'list the files'
     })
     expect(runButton.textContent).toBe('Working…')
     expect((runButton as HTMLButtonElement).disabled).toBe(true)
 
-    response.resolve('The answer')
-    await screen.findByText('The answer')
+    emit({ type: 'text', text: 'Let me ' }, { type: 'text', text: 'look.' })
+    await screen.findByText('Let me look.')
 
-    expect(runButton.textContent).toBe('Run')
+    emit({
+      type: 'tool-call',
+      toolCallId: 'call-1',
+      toolName: 'bash',
+      input: { command: 'ls' }
+    })
+    const tool = (await screen.findByText('bash')).closest('li')
+    expect(tool?.dataset.status).toBe('running')
+    expect(screen.getByText('{"command":"ls"}')).toBeTruthy()
+
+    emit({ type: 'tool-result', toolCallId: 'call-1', output: { content: 'README.md' } })
+    await screen.findByText('README.md')
+    expect(tool?.dataset.status).toBe('done')
+
+    run.resolve()
+    await waitFor(() => expect(runButton.textContent).toBe('Run'))
     expect((runButton as HTMLButtonElement).disabled).toBe(false)
   })
 
-  it('does not submit an empty prompt', async () => {
-    selectDirectory.mockResolvedValue('/tmp/workspace')
-    const user = userEvent.setup()
-    render(<App />)
+  it('marks a failed tool call and reports stream errors', async () => {
+    const user = await openWorkspace()
 
-    await user.click(screen.getByRole('button', { name: 'Open folder' }))
+    await user.type(screen.getByLabelText('Prompt'), 'read a file')
+    await user.click(screen.getByRole('button', { name: 'Run' }))
+
+    emit(
+      { type: 'tool-call', toolCallId: 'call-1', toolName: 'read', input: { path: 'gone.txt' } },
+      { type: 'tool-error', toolCallId: 'call-1', message: 'File not found' },
+      { type: 'error', message: 'Rate limited' }
+    )
+
+    expect((await screen.findByText('read')).closest('li')?.dataset.status).toBe('error')
+    expect(screen.getByText('File not found')).toBeTruthy()
+    expect((await screen.findByRole('alert')).textContent).toBe('Rate limited')
+  })
+
+  it('does not submit an empty prompt', async () => {
+    const user = await openWorkspace()
+
     const textarea = screen.getByLabelText('Prompt')
     await user.type(textarea, '   ')
-    const form = textarea.closest('form')
-    fireEvent.submit(form!)
+    fireEvent.submit(textarea.closest('form')!)
 
     expect(promptAgent).not.toHaveBeenCalled()
     expect(screen.queryByRole('alert')).toBeNull()
   })
 
   it('shows and recovers from an agent failure', async () => {
-    selectDirectory.mockResolvedValue('/tmp/workspace')
-    promptAgent.mockRejectedValueOnce(new Error('agent failed')).mockResolvedValue('Recovered')
-    const user = userEvent.setup()
-    render(<App />)
+    promptAgent.mockRejectedValueOnce(new Error('agent failed')).mockResolvedValue(undefined)
+    const user = await openWorkspace()
 
-    await user.click(screen.getByRole('button', { name: 'Open folder' }))
     await user.type(screen.getByLabelText('Prompt'), 'run')
     const runButton = screen.getByRole('button', { name: 'Run' })
     await user.click(runButton)
@@ -138,24 +188,36 @@ describe('App', () => {
     expect((runButton as HTMLButtonElement).disabled).toBe(false)
 
     await user.click(runButton)
-    await screen.findByText('Recovered')
-    expect(screen.queryByRole('alert')).toBeNull()
+    await waitFor(() => expect(screen.queryByRole('alert')).toBeNull())
   })
 
-  it('clears the previous answer when a new workspace is selected', async () => {
+  it('clears the previous transcript on a new run and on a new workspace', async () => {
     selectDirectory.mockResolvedValueOnce('/tmp/one').mockResolvedValueOnce('/tmp/two')
-    promptAgent.mockResolvedValue('Finished')
     const user = userEvent.setup()
     render(<App />)
 
     await user.click(screen.getByRole('button', { name: 'Open folder' }))
     await user.type(screen.getByLabelText('Prompt'), 'run')
     await user.click(screen.getByRole('button', { name: 'Run' }))
+    emit({ type: 'text', text: 'Finished' })
     await screen.findByText('Finished')
 
-    await user.click(screen.getByRole('button', { name: 'Open folder' }))
-    await waitFor(() => expect(screen.getByText('/tmp/two')).toBeTruthy())
+    await user.click(screen.getByRole('button', { name: 'Run' }))
+    await waitFor(() => expect(screen.queryByText('Finished')).toBeNull())
 
-    expect(screen.queryByText('Finished')).toBeNull()
+    emit({ type: 'text', text: 'Second run' })
+    await screen.findByText('Second run')
+
+    await user.click(screen.getByRole('button', { name: 'Open folder' }))
+    await screen.findByText('/tmp/two')
+    expect(screen.queryByText('Second run')).toBeNull()
+  })
+
+  it('stops listening for agent events when unmounted', async () => {
+    render(<App />)
+    expect(listeners).toHaveLength(1)
+
+    cleanup()
+    expect(unsubscribe).toHaveBeenCalledOnce()
   })
 })

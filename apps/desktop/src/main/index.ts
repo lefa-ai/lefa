@@ -1,14 +1,24 @@
 import { app, BrowserWindow, dialog, ipcMain } from 'electron'
+import { toAgentEvent } from '@lefa/harness'
 import { join } from 'node:path'
-import { agentPromptChannel, workspaceChannel, type AgentPromptInput } from '../shared/api'
+import {
+  agentEventChannel,
+  agentPromptChannel,
+  workspaceChannel,
+  type AgentPromptInput
+} from '../shared/api'
 import { createWorkspaceAgent } from './agent'
 
 function registerIpcHandlers(): void {
-  ipcMain.handle(agentPromptChannel, async (_event, input: AgentPromptInput) => {
+  ipcMain.handle(agentPromptChannel, async (event, input: AgentPromptInput) => {
     const agent = createWorkspaceAgent(input.cwd)
-    const result = await agent.generate({ prompt: input.prompt })
+    const result = await agent.stream({ prompt: input.prompt })
 
-    return result.text
+    for await (const part of result.stream) {
+      const agentEvent = toAgentEvent(part)
+
+      if (agentEvent) event.sender.send(agentEventChannel, agentEvent)
+    }
   })
 
   ipcMain.handle(workspaceChannel, async (event) => {

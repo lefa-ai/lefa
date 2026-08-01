@@ -92,7 +92,7 @@ const electron = vi.hoisted(() => {
 
 const agent = vi.hoisted(() => ({
   createWorkspaceAgent: vi.fn(),
-  generate: vi.fn()
+  stream: vi.fn()
 }))
 const environment = process.env as Record<string, string | undefined>
 
@@ -108,8 +108,8 @@ async function loadMain(options: { packaged?: boolean; rendererUrl?: string } = 
   vi.resetModules()
   electron.reset()
   agent.createWorkspaceAgent.mockReset()
-  agent.generate.mockReset()
-  agent.createWorkspaceAgent.mockReturnValue({ generate: agent.generate })
+  agent.stream.mockReset()
+  agent.createWorkspaceAgent.mockReturnValue({ stream: agent.stream })
   electron.app.isPackaged = options.packaged ?? false
 
   if (options.rendererUrl === undefined) {
@@ -159,16 +159,35 @@ describe('desktop main process', () => {
     expect(openHandler()).toEqual({ action: 'deny' })
   })
 
-  it('returns the generated agent text over IPC', async () => {
+  it('streams renderable agent events to the requesting window', async () => {
     await loadMain()
-    agent.generate.mockResolvedValue({ text: 'answer' })
+    agent.stream.mockResolvedValue({
+      stream: (async function* () {
+        yield { type: 'text-start', id: 'text-1' }
+        yield { type: 'text-delta', id: 'text-1', text: 'Hello' }
+        yield {
+          type: 'tool-call',
+          toolCallId: 'call-1',
+          toolName: 'bash',
+          input: { command: 'ls' }
+        }
+      })()
+    })
+    const send = vi.fn()
     const promptHandler = electron.ipcHandlers.get('agent:prompt')
 
-    await expect(promptHandler?.({}, { cwd: '/tmp/workspace', prompt: 'Help me' })).resolves.toBe(
-      'answer'
-    )
+    await expect(
+      promptHandler?.({ sender: { send } }, { cwd: '/tmp/workspace', prompt: 'Help me' })
+    ).resolves.toBeUndefined()
     expect(agent.createWorkspaceAgent).toHaveBeenCalledWith('/tmp/workspace')
-    expect(agent.generate).toHaveBeenCalledWith({ prompt: 'Help me' })
+    expect(agent.stream).toHaveBeenCalledWith({ prompt: 'Help me' })
+    expect(send.mock.calls).toEqual([
+      ['agent:event', { type: 'text', text: 'Hello' }],
+      [
+        'agent:event',
+        { type: 'tool-call', toolCallId: 'call-1', toolName: 'bash', input: { command: 'ls' } }
+      ]
+    ])
   })
 
   it('returns null when workspace selection has no owning window', async () => {
