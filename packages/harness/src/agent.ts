@@ -36,6 +36,11 @@ export function createAgent(model: LanguageModel, cwd: string): HarnessAgent {
     : ''
 
   return new ToolLoopAgent<never, HarnessTools, never>({
+    // No stop conditions: the loop runs until the model stops calling tools.
+    // The AI SDK would otherwise cut the agent off after 20 steps, mid-task and
+    // without a word. Interrupting is the operator's call — that is what
+    // Session.abort is for.
+    stopWhen: [],
     instructions: `You are an expert coding assistant operating inside Lefa, a coding agent harness. You help users by reading files, executing commands, editing code, and writing new files.
 
 ## Guidelines

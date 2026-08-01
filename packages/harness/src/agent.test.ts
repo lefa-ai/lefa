@@ -101,6 +101,40 @@ describe('agent', () => {
     })
   })
 
+  it('keeps running past the AI SDK default step limit', async () => {
+    await withWorkspace(async (cwd) => {
+      const toolSteps = 25
+      const model = new MockLanguageModelV3({
+        doGenerate: [
+          ...Array.from({ length: toolSteps }, (_unused, step) => ({
+            content: [
+              {
+                type: 'tool-call' as const,
+                toolCallId: `write-${step}`,
+                toolName: 'write',
+                input: JSON.stringify({ path: `step-${step}.txt`, content: `${step}` })
+              }
+            ],
+            finishReason: { unified: 'tool-calls' as const, raw: undefined },
+            usage,
+            warnings: []
+          })),
+          textResult('All done')
+        ]
+      })
+
+      const result = await createAgent(model, cwd).generate({ prompt: 'Keep going' })
+
+      assert.equal(result.text, 'All done')
+      assert.equal(
+        model.doGenerateCalls.length,
+        toolSteps + 1,
+        'the agent must not be cut off at the default 20 steps'
+      )
+      assert.equal(await readFile(join(cwd, `step-${toolSteps - 1}.txt`), 'utf8'), `${toolSteps - 1}`)
+    })
+  })
+
   it('executes tools through the real AI SDK tool loop', async () => {
     await withWorkspace(async (cwd) => {
       const model = new MockLanguageModelV3({
