@@ -6,6 +6,16 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { AgentEvent, SessionEvent } from '../../shared/api'
 import App from './App'
 
+// Streamdown highlights through Shiki asynchronously, which is slow and flaky
+// under jsdom. The wrapper is thin; render its text directly instead.
+vi.mock('./components/markdown', () => ({
+  Markdown: ({ children }: { children: string }) => <div>{children}</div>
+}))
+
+function toolStatus(name: string): string | undefined {
+  return screen.getByText(name).closest('[data-status]')?.getAttribute('data-status') ?? undefined
+}
+
 function deferred<T>() {
   let resolve!: (value: T) => void
   let reject!: (reason?: unknown) => void
@@ -157,13 +167,13 @@ describe('App', () => {
       toolName: 'bash',
       input: { command: 'ls' }
     })
-    const tool = (await screen.findByText('bash')).closest('li')
-    expect(tool?.dataset.status).toBe('running')
+    await screen.findByText('bash')
+    expect(toolStatus('bash')).toBe('running')
     expect(screen.getByText('{"command":"ls"}')).toBeTruthy()
 
     emit({ type: 'tool-result', toolCallId: 'call-1', output: { content: 'README.md' } })
     await screen.findByText('README.md')
-    expect(tool?.dataset.status).toBe('done')
+    expect(toolStatus('bash')).toBe('done')
 
     inFlight.resolve()
     await screen.findByRole('button', { name: 'Run' })
@@ -182,7 +192,7 @@ describe('App', () => {
 
     emit({ type: 'aborted' })
     await screen.findByText('Stopped.')
-    expect((await screen.findByText('bash')).closest('li')?.dataset.status).toBe('aborted')
+    expect(toolStatus('bash')).toBe('aborted')
 
     inFlight.resolve()
     await screen.findByRole('button', { name: 'Run' })
@@ -247,7 +257,7 @@ describe('App', () => {
       { type: 'error', message: 'Rate limited' }
     )
 
-    expect((await screen.findByText('read')).closest('li')?.dataset.status).toBe('error')
+    expect(toolStatus('read')).toBe('error')
     expect(screen.getByText('File not found')).toBeTruthy()
     expect((await screen.findByRole('alert')).textContent).toBe('Rate limited')
   })

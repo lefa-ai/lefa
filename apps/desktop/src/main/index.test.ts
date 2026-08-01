@@ -160,8 +160,10 @@ describe('desktop main process', () => {
     expect(electron.ipcHandlers.has('session:abort')).toBe(true)
     expect(electron.ipcHandlers.has('workspace:select-directory')).toBe(true)
     expect(window?.options).toMatchObject({
-      width: 900,
-      height: 670,
+      width: 1100,
+      height: 760,
+      minWidth: 640,
+      minHeight: 480,
       show: false,
       autoHideMenuBar: true,
       backgroundColor: '#09090b',

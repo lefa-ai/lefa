@@ -41,6 +41,18 @@
   },
   "dependencies": {
     "@ai-sdk/anthropic": "^4.0.18",
-    "@lefa/harness": "workspace:*"
+    "@base-ui/react": "^1.6.0",
+    "@fontsource-variable/geist": "^5.3.0",
+    "@fontsource-variable/geist-mono": "^5.3.0",
+    "@lefa/harness": "workspace:*",
+    "@shadcn/react": "^0.2.1",
+    "@streamdown/code": "^1.1.1",
+    "@tailwindcss/vite": "^4.3.3",
+    "class-variance-authority": "^0.7.1",
+    "clsx": "^2.1.1",
+    "lucide-react": "^1.28.0",
+    "streamdown": "^2.5.0",
+    "tailwind-merge": "^3.6.0",
+    "tailwindcss": "^4.3.3"
   }
 }
