@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { reduceTranscript, type TranscriptItem } from './transcript'
+import { appendPrompt, reduceTranscript, type TranscriptItem } from './transcript'
 
 function reduceAll(events: Parameters<typeof reduceTranscript>[1][]): readonly TranscriptItem[] {
   return events.reduce<readonly TranscriptItem[]>(
@@ -98,5 +98,46 @@ describe('transcript', () => {
     const items: readonly TranscriptItem[] = [{ kind: 'text', text: 'Hello' }]
 
     expect(reduceTranscript(items, { type: 'error', message: 'Rate limited' })).toBe(items)
+  })
+
+  it('appends the prompt as its own turn without merging into the reply', () => {
+    const items = appendPrompt(
+      appendPrompt([{ kind: 'text', text: 'Two files.' }], 'List them'),
+      'Read the first'
+    )
+
+    expect(items).toEqual([
+      { kind: 'text', text: 'Two files.' },
+      { kind: 'user', text: 'List them' },
+      { kind: 'user', text: 'Read the first' }
+    ])
+  })
+
+  it('settles unfinished tools and marks the stop when a run is interrupted', () => {
+    const items = reduceAll([
+      { type: 'tool-call', toolCallId: 'call-1', toolName: 'bash', input: 'ls' },
+      { type: 'tool-result', toolCallId: 'call-1', output: 'README.md' },
+      { type: 'tool-call', toolCallId: 'call-2', toolName: 'bash', input: 'sleep 60' },
+      { type: 'aborted' }
+    ])
+
+    expect(items).toEqual([
+      {
+        kind: 'tool',
+        toolCallId: 'call-1',
+        toolName: 'bash',
+        input: 'ls',
+        status: 'done',
+        output: 'README.md'
+      },
+      {
+        kind: 'tool',
+        toolCallId: 'call-2',
+        toolName: 'bash',
+        input: 'sleep 60',
+        status: 'aborted'
+      },
+      { kind: 'notice', text: 'Stopped.' }
+    ])
   })
 })
