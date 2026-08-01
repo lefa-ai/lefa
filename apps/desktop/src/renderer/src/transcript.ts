@@ -1,9 +1,11 @@
 import type { AgentEvent } from '../../shared/api'
 
-export type ToolStatus = 'running' | 'done' | 'error'
+export type ToolStatus = 'running' | 'done' | 'error' | 'aborted'
 
 export type TranscriptItem =
+  | { kind: 'user'; text: string }
   | { kind: 'text'; text: string }
+  | { kind: 'notice'; text: string }
   | {
       kind: 'tool'
       toolCallId: string
@@ -29,6 +31,13 @@ function updateTool(
   return items.map((item) =>
     item.kind === 'tool' && item.toolCallId === toolCallId ? { ...item, status, output } : item
   )
+}
+
+export function appendPrompt(
+  items: readonly TranscriptItem[],
+  text: string
+): readonly TranscriptItem[] {
+  return [...items, { kind: 'user', text }]
 }
 
 export function reduceTranscript(
@@ -58,6 +67,15 @@ export function reduceTranscript(
       return updateTool(items, event.toolCallId, 'done', format(event.output))
     case 'tool-error':
       return updateTool(items, event.toolCallId, 'error', event.message)
+    case 'aborted':
+      return [
+        ...items.map((item) =>
+          item.kind === 'tool' && item.status === 'running'
+            ? { ...item, status: 'aborted' as const }
+            : item
+        ),
+        { kind: 'notice', text: 'Stopped.' }
+      ]
     default:
       return items
   }

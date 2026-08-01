@@ -2,12 +2,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const mocks = vi.hoisted(() => ({
   anthropic: vi.fn(),
-  createAgent: vi.fn(),
+  Session: vi.fn(),
   existsSync: vi.fn()
 }))
 
 vi.mock('@ai-sdk/anthropic', () => ({ anthropic: mocks.anthropic }))
-vi.mock('@lefa/harness', () => ({ createAgent: mocks.createAgent }))
+vi.mock('@lefa/harness', () => ({ Session: mocks.Session }))
 vi.mock('node:fs', () => ({ existsSync: mocks.existsSync }))
 
 beforeEach(() => {
@@ -19,20 +19,19 @@ afterEach(() => {
   vi.restoreAllMocks()
 })
 
-describe('workspace agent', () => {
+describe('workspace session', () => {
   it('uses Claude Haiku 4.5 and passes the workspace to the harness', async () => {
     const model = { id: 'model' }
-    const agent = { id: 'agent' }
     mocks.existsSync.mockReturnValue(false)
     mocks.anthropic.mockReturnValue(model)
-    mocks.createAgent.mockReturnValue(agent)
     const loadEnvFile = vi.spyOn(process, 'loadEnvFile').mockImplementation(() => {})
 
-    const { createWorkspaceAgent } = await import('./agent')
+    const { createWorkspaceSession } = await import('./agent')
+    const session = createWorkspaceSession('/tmp/workspace')
 
-    expect(createWorkspaceAgent('/tmp/workspace')).toBe(agent)
+    expect(session).toBeInstanceOf(mocks.Session)
     expect(mocks.anthropic).toHaveBeenCalledWith('claude-haiku-4-5')
-    expect(mocks.createAgent).toHaveBeenCalledWith(model, '/tmp/workspace')
+    expect(mocks.Session).toHaveBeenCalledWith(model, '/tmp/workspace')
     expect(loadEnvFile).not.toHaveBeenCalled()
   })
 

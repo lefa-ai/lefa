@@ -1,23 +1,28 @@
 import { contextBridge, ipcRenderer } from 'electron'
 import {
-  agentEventChannel,
-  agentPromptChannel,
+  sessionAbortChannel,
+  sessionEventChannel,
+  sessionOpenChannel,
+  sessionPromptChannel,
   workspaceChannel,
-  type AgentEvent,
-  type AgentPromptInput,
-  type LefaApi
+  type LefaApi,
+  type SessionEvent,
+  type SessionPromptInput
 } from '../shared/api'
 
 const api = {
-  agent: {
-    prompt: (input: AgentPromptInput) =>
-      ipcRenderer.invoke(agentPromptChannel, input) as Promise<void>,
-    onEvent: (listener: (event: AgentEvent) => void) => {
-      const handler = (_event: unknown, agentEvent: AgentEvent): void => listener(agentEvent)
-      ipcRenderer.on(agentEventChannel, handler)
+  session: {
+    open: (cwd: string) => ipcRenderer.invoke(sessionOpenChannel, cwd) as Promise<string>,
+    prompt: (input: SessionPromptInput) =>
+      ipcRenderer.invoke(sessionPromptChannel, input) as Promise<void>,
+    abort: (sessionId: string) =>
+      ipcRenderer.invoke(sessionAbortChannel, sessionId) as Promise<void>,
+    onEvent: (listener: (event: SessionEvent) => void) => {
+      const handler = (_event: unknown, sessionEvent: SessionEvent): void => listener(sessionEvent)
+      ipcRenderer.on(sessionEventChannel, handler)
 
       return () => {
-        ipcRenderer.off(agentEventChannel, handler)
+        ipcRenderer.off(sessionEventChannel, handler)
       }
     }
   },

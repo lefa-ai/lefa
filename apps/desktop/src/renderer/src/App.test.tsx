@@ -3,7 +3,7 @@
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import type { AgentEvent } from '../../shared/api'
+import type { AgentEvent, SessionEvent } from '../../shared/api'
 import App from './App'
 
 function deferred<T>() {
@@ -18,13 +18,19 @@ function deferred<T>() {
 }
 
 const selectDirectory = vi.fn<() => Promise<string | null>>()
-const promptAgent = vi.fn<(input: { cwd: string; prompt: string }) => Promise<void>>()
+const openSession = vi.fn<(cwd: string) => Promise<string>>()
+const promptSession = vi.fn<(input: { sessionId: string; prompt: string }) => Promise<void>>()
+const abortSession = vi.fn<(sessionId: string) => Promise<void>>()
 const unsubscribe = vi.fn()
-let listeners: Array<(event: AgentEvent) => void> = []
+let listeners: Array<(event: SessionEvent) => void> = []
 
 function emit(...events: AgentEvent[]): void {
+  emitFrom('session-1', ...events)
+}
+
+function emitFrom(sessionId: string, ...events: AgentEvent[]): void {
   act(() => {
-    for (const event of events) for (const listener of listeners) listener(event)
+    for (const event of events) for (const listener of listeners) listener({ sessionId, event })
   })
 }
 
@@ -38,20 +44,35 @@ async function openWorkspace(path = '/tmp/workspace'): Promise<ReturnType<typeof
   return user
 }
 
+async function run(user: ReturnType<typeof userEvent.setup>, text: string): Promise<void> {
+  await user.type(screen.getByLabelText('Prompt'), text)
+  await user.click(screen.getByRole('button', { name: 'Run' }))
+}
+
 beforeEach(() => {
   selectDirectory.mockReset()
-  promptAgent.mockReset()
-  promptAgent.mockResolvedValue(undefined)
+  openSession.mockReset()
+  openSession.mockResolvedValue('session-1')
+  promptSession.mockReset()
+  promptSession.mockResolvedValue(undefined)
+  abortSession.mockReset()
+  abortSession.mockResolvedValue(undefined)
   unsubscribe.mockReset()
   listeners = []
   Object.defineProperty(window, 'lefa', {
     configurable: true,
     value: {
-      agent: {
-        prompt: promptAgent,
-        onEvent: (listener: (event: AgentEvent) => void) => {
+      session: {
+        open: openSession,
+        prompt: promptSession,
+        abort: abortSession,
+        onEvent: (listener: (event: SessionEvent) => void) => {
           listeners.push(listener)
-          return unsubscribe
+
+          return () => {
+            listeners = listeners.filter((current) => current !== listener)
+            unsubscribe()
+          }
         }
       },
       workspace: { selectDirectory }
@@ -62,7 +83,7 @@ beforeEach(() => {
 afterEach(cleanup)
 
 describe('App', () => {
-  it('selects a workspace and only then shows the prompt form', async () => {
+  it('selects a workspace, opens a session, and only then shows the prompt form', async () => {
     const selection = deferred<string | null>()
     selectDirectory.mockReturnValue(selection.promise)
     const user = userEvent.setup()
@@ -78,6 +99,7 @@ describe('App', () => {
     selection.resolve('/tmp/workspace')
     await screen.findByText('/tmp/workspace')
 
+    expect(openSession).toHaveBeenCalledWith('/tmp/workspace')
     expect(screen.getByLabelText('Prompt')).toBeTruthy()
     expect(openButton.textContent).toBe('Open folder')
     expect((openButton as HTMLButtonElement).disabled).toBe(false)
@@ -91,6 +113,7 @@ describe('App', () => {
     await user.click(screen.getByRole('button', { name: 'Open folder' }))
 
     expect(selectDirectory).toHaveBeenCalledOnce()
+    expect(openSession).not.toHaveBeenCalled()
     expect(screen.queryByLabelText('Prompt')).toBeNull()
     expect(screen.queryByRole('alert')).toBeNull()
   })
@@ -110,21 +133,20 @@ describe('App', () => {
     expect(screen.queryByRole('alert')).toBeNull()
   })
 
-  it('renders streamed text and tool activity while the run is in flight', async () => {
-    const run = deferred<void>()
-    promptAgent.mockReturnValue(run.promise)
+  it('echoes the prompt and renders streamed activity while the run is in flight', async () => {
+    const inFlight = deferred<void>()
+    promptSession.mockReturnValue(inFlight.promise)
     const user = await openWorkspace()
 
-    await user.type(screen.getByLabelText('Prompt'), '  list the files  ')
-    const runButton = screen.getByRole('button', { name: 'Run' })
-    await user.click(runButton)
+    await run(user, '  list the files  ')
 
-    expect(promptAgent).toHaveBeenCalledWith({
-      cwd: '/tmp/workspace',
+    expect(promptSession).toHaveBeenCalledWith({
+      sessionId: 'session-1',
       prompt: 'list the files'
     })
-    expect(runButton.textContent).toBe('Working…')
-    expect((runButton as HTMLButtonElement).disabled).toBe(true)
+    expect(screen.getByText('list the files')).toBeTruthy()
+    expect((screen.getByLabelText('Prompt') as HTMLTextAreaElement).value).toBe('')
+    expect(screen.queryByRole('button', { name: 'Run' })).toBeNull()
 
     emit({ type: 'text', text: 'Let me ' }, { type: 'text', text: 'look.' })
     await screen.findByText('Let me look.')
@@ -143,16 +165,81 @@ describe('App', () => {
     await screen.findByText('README.md')
     expect(tool?.dataset.status).toBe('done')
 
-    run.resolve()
-    await waitFor(() => expect(runButton.textContent).toBe('Run'))
-    expect((runButton as HTMLButtonElement).disabled).toBe(false)
+    inFlight.resolve()
+    await screen.findByRole('button', { name: 'Run' })
+  })
+
+  it('stops a running turn and settles the transcript', async () => {
+    const inFlight = deferred<void>()
+    promptSession.mockReturnValue(inFlight.promise)
+    const user = await openWorkspace()
+
+    await run(user, 'take a while')
+    emit({ type: 'tool-call', toolCallId: 'call-1', toolName: 'bash', input: 'sleep 60' })
+
+    await user.click(await screen.findByRole('button', { name: 'Stop' }))
+    expect(abortSession).toHaveBeenCalledWith('session-1')
+
+    emit({ type: 'aborted' })
+    await screen.findByText('Stopped.')
+    expect((await screen.findByText('bash')).closest('li')?.dataset.status).toBe('aborted')
+
+    inFlight.resolve()
+    await screen.findByRole('button', { name: 'Run' })
+  })
+
+  it('reports a failure to stop the agent', async () => {
+    promptSession.mockReturnValue(deferred<void>().promise)
+    abortSession.mockRejectedValue(new Error('no such session'))
+    const user = await openWorkspace()
+
+    await run(user, 'take a while')
+    await user.click(await screen.findByRole('button', { name: 'Stop' }))
+
+    expect((await screen.findByRole('alert')).textContent).toBe('Unable to stop the agent.')
+  })
+
+  it('keeps the conversation across turns and clears it for a new workspace', async () => {
+    selectDirectory.mockResolvedValueOnce('/tmp/one').mockResolvedValueOnce('/tmp/two')
+    openSession.mockResolvedValueOnce('session-1').mockResolvedValueOnce('session-2')
+    const user = userEvent.setup()
+    render(<App />)
+
+    await user.click(screen.getByRole('button', { name: 'Open folder' }))
+    await screen.findByText('/tmp/one')
+    await run(user, 'list the files')
+    emit({ type: 'text', text: 'Two files.' })
+    await screen.findByText('Two files.')
+
+    await run(user, 'read the first')
+    expect(screen.getByText('list the files')).toBeTruthy()
+    expect(screen.getByText('Two files.')).toBeTruthy()
+    expect(screen.getByText('read the first')).toBeTruthy()
+
+    emitFrom('session-1', { type: 'text', text: 'It holds the readme.' })
+    await screen.findByText('It holds the readme.')
+
+    await user.click(screen.getByRole('button', { name: 'Open folder' }))
+    await screen.findByText('/tmp/two')
+    expect(screen.queryByText('It holds the readme.')).toBeNull()
+    expect(screen.queryByText('list the files')).toBeNull()
+  })
+
+  it('ignores events from a session that is no longer on screen', async () => {
+    const user = await openWorkspace()
+
+    await run(user, 'list the files')
+    emitFrom('session-9', { type: 'text', text: 'From somewhere else' })
+    emitFrom('session-9', { type: 'error', message: 'Stale failure' })
+
+    expect(screen.queryByText('From somewhere else')).toBeNull()
+    expect(screen.queryByRole('alert')).toBeNull()
   })
 
   it('marks a failed tool call and reports stream errors', async () => {
     const user = await openWorkspace()
 
-    await user.type(screen.getByLabelText('Prompt'), 'read a file')
-    await user.click(screen.getByRole('button', { name: 'Run' }))
+    await run(user, 'read a file')
 
     emit(
       { type: 'tool-call', toolCallId: 'call-1', toolName: 'read', input: { path: 'gone.txt' } },
@@ -172,48 +259,23 @@ describe('App', () => {
     await user.type(textarea, '   ')
     fireEvent.submit(textarea.closest('form')!)
 
-    expect(promptAgent).not.toHaveBeenCalled()
+    expect(promptSession).not.toHaveBeenCalled()
     expect(screen.queryByRole('alert')).toBeNull()
   })
 
   it('shows and recovers from an agent failure', async () => {
-    promptAgent.mockRejectedValueOnce(new Error('agent failed')).mockResolvedValue(undefined)
+    promptSession.mockRejectedValueOnce(new Error('agent failed')).mockResolvedValue(undefined)
     const user = await openWorkspace()
 
-    await user.type(screen.getByLabelText('Prompt'), 'run')
-    const runButton = screen.getByRole('button', { name: 'Run' })
-    await user.click(runButton)
+    await run(user, 'run')
 
     expect((await screen.findByRole('alert')).textContent).toBe('Unable to run the agent.')
-    expect((runButton as HTMLButtonElement).disabled).toBe(false)
 
-    await user.click(runButton)
+    await run(user, 'again')
     await waitFor(() => expect(screen.queryByRole('alert')).toBeNull())
   })
 
-  it('clears the previous transcript on a new run and on a new workspace', async () => {
-    selectDirectory.mockResolvedValueOnce('/tmp/one').mockResolvedValueOnce('/tmp/two')
-    const user = userEvent.setup()
-    render(<App />)
-
-    await user.click(screen.getByRole('button', { name: 'Open folder' }))
-    await user.type(screen.getByLabelText('Prompt'), 'run')
-    await user.click(screen.getByRole('button', { name: 'Run' }))
-    emit({ type: 'text', text: 'Finished' })
-    await screen.findByText('Finished')
-
-    await user.click(screen.getByRole('button', { name: 'Run' }))
-    await waitFor(() => expect(screen.queryByText('Finished')).toBeNull())
-
-    emit({ type: 'text', text: 'Second run' })
-    await screen.findByText('Second run')
-
-    await user.click(screen.getByRole('button', { name: 'Open folder' }))
-    await screen.findByText('/tmp/two')
-    expect(screen.queryByText('Second run')).toBeNull()
-  })
-
-  it('stops listening for agent events when unmounted', async () => {
+  it('stops listening for session events when unmounted', async () => {
     render(<App />)
     expect(listeners).toHaveLength(1)
 

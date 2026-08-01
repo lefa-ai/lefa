@@ -1,20 +1,30 @@
 import type { AgentEvent } from '@lefa/harness/events'
 
-export const agentPromptChannel = 'agent:prompt'
-export const agentEventChannel = 'agent:event'
+export const sessionOpenChannel = 'session:open'
+export const sessionPromptChannel = 'session:prompt'
+export const sessionAbortChannel = 'session:abort'
+export const sessionEventChannel = 'session:event'
 export const workspaceChannel = 'workspace:select-directory'
 
 export type { AgentEvent }
 
-export interface AgentPromptInput {
-  cwd: string
+export interface SessionPromptInput {
+  sessionId: string
   prompt: string
 }
 
+/** An agent event tagged with its session, so stale runs can be ignored. */
+export interface SessionEvent {
+  sessionId: string
+  event: AgentEvent
+}
+
 export interface LefaApi {
-  agent: {
-    prompt: (input: AgentPromptInput) => Promise<void>
-    onEvent: (listener: (event: AgentEvent) => void) => () => void
+  session: {
+    open: (cwd: string) => Promise<string>
+    prompt: (input: SessionPromptInput) => Promise<void>
+    abort: (sessionId: string) => Promise<void>
+    onEvent: (listener: (event: SessionEvent) => void) => () => void
   }
   workspace: {
     selectDirectory: () => Promise<string | null>

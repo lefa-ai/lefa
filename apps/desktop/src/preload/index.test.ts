@@ -28,32 +28,41 @@ beforeEach(() => {
 })
 
 describe('preload bridge', () => {
-  it('exposes agent prompts through the expected IPC channel', async () => {
-    electron.invoke.mockResolvedValue(undefined)
+  it('exposes session lifecycle calls through the expected IPC channels', async () => {
     const api = exposedApi()
-    const input = { cwd: '/tmp/workspace', prompt: 'Help me' }
 
-    await expect(api.agent.prompt(input)).resolves.toBeUndefined()
-    expect(electron.invoke).toHaveBeenCalledWith('agent:prompt', input)
+    electron.invoke.mockResolvedValueOnce('session-1')
+    await expect(api.session.open('/tmp/workspace')).resolves.toBe('session-1')
+    expect(electron.invoke).toHaveBeenCalledWith('session:open', '/tmp/workspace')
+
+    const input = { sessionId: 'session-1', prompt: 'Help me' }
+    electron.invoke.mockResolvedValueOnce(undefined)
+    await expect(api.session.prompt(input)).resolves.toBeUndefined()
+    expect(electron.invoke).toHaveBeenCalledWith('session:prompt', input)
+
+    electron.invoke.mockResolvedValueOnce(undefined)
+    await expect(api.session.abort('session-1')).resolves.toBeUndefined()
+    expect(electron.invoke).toHaveBeenCalledWith('session:abort', 'session-1')
   })
 
-  it('forwards agent events to the listener and unsubscribes on cleanup', () => {
+  it('forwards session events to the listener and unsubscribes on cleanup', () => {
     const api = exposedApi()
     const listener = vi.fn()
 
-    const unsubscribe = api.agent.onEvent(listener)
+    const unsubscribe = api.session.onEvent(listener)
     const [channel, handler] = electron.on.mock.calls[0] as [
       string,
-      (event: unknown, agentEvent: unknown) => void
+      (event: unknown, sessionEvent: unknown) => void
     ]
 
-    expect(channel).toBe('agent:event')
+    expect(channel).toBe('session:event')
 
-    handler({ senderId: 1 }, { type: 'text', text: 'Hello' })
-    expect(listener).toHaveBeenCalledWith({ type: 'text', text: 'Hello' })
+    const sessionEvent = { sessionId: 'session-1', event: { type: 'text', text: 'Hello' } }
+    handler({ senderId: 1 }, sessionEvent)
+    expect(listener).toHaveBeenCalledWith(sessionEvent)
 
     unsubscribe()
-    expect(electron.off).toHaveBeenCalledWith('agent:event', handler)
+    expect(electron.off).toHaveBeenCalledWith('session:event', handler)
   })
 
   it('exposes workspace selection through the expected IPC channel', async () => {

@@ -5,6 +5,7 @@ export type AgentEvent =
   | { type: 'tool-call'; toolCallId: string; toolName: string; input: unknown }
   | { type: 'tool-result'; toolCallId: string; output: unknown }
   | { type: 'tool-error'; toolCallId: string; message: string }
+  | { type: 'aborted' }
   | { type: 'error'; message: string }
 
 function errorMessage(error: unknown): string {
@@ -32,6 +33,8 @@ export function toAgentEvent<TOOLS extends ToolSet>(
         toolCallId: part.toolCallId,
         message: errorMessage(part.error)
       }
+    case 'abort':
+      return { type: 'aborted' }
     case 'error':
       return { type: 'error', message: errorMessage(part.error) }
     default:
