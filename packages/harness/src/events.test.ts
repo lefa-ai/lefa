@@ -80,6 +80,11 @@ describe('agent events', () => {
     })
   })
 
+  it('maps an interrupted stream', () => {
+    assert.deepEqual(toAgentEvent(part({ type: 'abort', reason: 'stopped' })), { type: 'aborted' })
+    assert.deepEqual(toAgentEvent(part({ type: 'abort' })), { type: 'aborted' })
+  })
+
   it('ignores parts the interface does not render', () => {
     assert.equal(toAgentEvent(part({ type: 'start' })), undefined)
     assert.equal(toAgentEvent(part({ type: 'text-start', id: 'text-1' })), undefined)
