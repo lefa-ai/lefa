@@ -118,6 +118,41 @@ describe('session store', () => {
     })
   })
 
+  it('drops lines that parse as JSON but are not valid messages', async () => {
+    await withStore(async (store, root) => {
+      await store.append(meta(idA), turn)
+      const path = join(root, `${idA}.jsonl`)
+
+      for (const junk of [
+        { type: 'message', message: { role: 'wizard', content: 'nope' } },
+        { type: 'message', message: { role: 'user' } },
+        { type: 'message' },
+        { type: 'something-else', message: { role: 'user', content: 'ok' } },
+        { hello: 'world' }
+      ]) {
+        await appendFile(path, `${JSON.stringify(junk)}\n`)
+      }
+
+      const record = await store.load(idA)
+
+      assert.equal(record.messages.length, 2, 'only the two real messages survive')
+      assert.deepEqual(record.messages, turn)
+    })
+  })
+
+  it('keeps fields the message schema does not know about', async () => {
+    await withStore(async (store) => {
+      const withOptions: ModelMessage = {
+        role: 'user',
+        content: 'Cache me',
+        providerOptions: { anthropic: { cacheControl: { type: 'ephemeral' } } }
+      }
+      await store.append(meta(idA), [withOptions])
+
+      assert.deepEqual((await store.load(idA)).messages[0], withOptions)
+    })
+  })
+
   it('lists nothing when no session has been saved', async () => {
     await withStore(async (store) => {
       assert.deepEqual(await store.list(), [])
