@@ -1,7 +1,9 @@
 import { app, BrowserWindow, dialog, ipcMain, type WebContents } from 'electron'
 import { toAgentEvents, type Session } from '@lefa/harness'
+import { GatewayAuthenticationError } from '@ai-sdk/gateway'
 import { join } from 'node:path'
 import {
+  modelListChannel,
   sessionAbortChannel,
   sessionDeleteChannel,
   sessionEventChannel,
@@ -9,13 +11,19 @@ import {
   sessionOpenChannel,
   sessionPromptChannel,
   sessionResumeChannel,
+  sessionSetModelChannel,
   workspaceChannel,
   type AgentEvent,
+  type ModelSummary,
+  type OpenedSession,
   type RestoredSession,
   type SessionPromptInput,
-  type SessionSummary
+  type SessionSummary,
+  type SetModelInput
 } from '../shared/api'
-import { createWorkspaceSession, sessionStore } from './agent'
+import { createWorkspaceSession, DEFAULT_MODEL, sessionStore } from './agent'
+import { listModels } from './models'
+import { readDefaultModel, writeDefaultModel } from './settings'
 
 const sessions = new Map<string, Session>()
 
@@ -25,12 +33,22 @@ function send(sender: WebContents, sessionId: string, event: AgentEvent): void {
   sender.send(sessionEventChannel, { sessionId, event })
 }
 
+/** Only `.message` survives IPC, so a missing key must say what to do about it. */
+function describe(error: unknown): Error {
+  if (GatewayAuthenticationError.isInstance(error)) {
+    return new Error('No AI Gateway key. Set AI_GATEWAY_API_KEY in apps/desktop/.env.')
+  }
+
+  return error instanceof Error ? error : new Error(String(error))
+}
+
 function registerIpcHandlers(): void {
-  ipcMain.handle(sessionOpenChannel, (_event, cwd: string) => {
-    const session = createWorkspaceSession(cwd)
+  ipcMain.handle(sessionOpenChannel, async (_event, cwd: string): Promise<OpenedSession> => {
+    const model = await readDefaultModel()
+    const session = createWorkspaceSession(cwd, model)
     sessions.set(session.id, session)
 
-    return session.id
+    return { id: session.id, model }
   })
 
   ipcMain.handle(sessionPromptChannel, async (event, input: SessionPromptInput) => {
@@ -38,8 +56,12 @@ function registerIpcHandlers(): void {
 
     if (!session) throw new Error('That session is no longer open.')
 
-    for await (const agentEvent of session.prompt(input.prompt)) {
-      send(event.sender, input.sessionId, agentEvent)
+    try {
+      for await (const agentEvent of session.prompt(input.prompt)) {
+        send(event.sender, input.sessionId, agentEvent)
+      }
+    } catch (error) {
+      throw describe(error)
     }
   })
 
@@ -53,10 +75,19 @@ function registerIpcHandlers(): void {
     // A session already in memory may hold turns newer than the file it was
     // loaded from, so it redraws from itself rather than from disk.
     const open = sessions.get(sessionId)
-    if (open) return { id: open.id, cwd: open.cwd, events: toAgentEvents(open.history) }
+
+    if (open) {
+      return {
+        id: open.id,
+        cwd: open.cwd,
+        model: open.meta.model ?? DEFAULT_MODEL,
+        events: toAgentEvents(open.history)
+      }
+    }
 
     const { meta, messages } = await sessionStore.load(sessionId)
-    const session = createWorkspaceSession(meta.cwd, {
+    const model = meta.model ?? DEFAULT_MODEL
+    const session = createWorkspaceSession(meta.cwd, model, {
       id: meta.id,
       createdAt: meta.createdAt,
       title: meta.title,
@@ -64,8 +95,20 @@ function registerIpcHandlers(): void {
     })
     sessions.set(session.id, session)
 
-    return { id: session.id, cwd: session.cwd, events: toAgentEvents(messages) }
+    return { id: session.id, cwd: session.cwd, model, events: toAgentEvents(messages) }
   })
+
+  ipcMain.handle(sessionSetModelChannel, async (_event, input: SetModelInput) => {
+    const session = sessions.get(input.sessionId)
+
+    if (!session) throw new Error('That session is no longer open.')
+
+    await session.setModel(input.model)
+    // The latest choice also becomes the default for the next new session.
+    await writeDefaultModel(input.model)
+  })
+
+  ipcMain.handle(modelListChannel, (): Promise<readonly ModelSummary[]> => listModels())
 
   ipcMain.handle(sessionDeleteChannel, async (_event, sessionId: string) => {
     // Discard rather than abort: a run still unwinding would otherwise save its
