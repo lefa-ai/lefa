@@ -96,9 +96,16 @@ const agent = vi.hoisted(() => ({
   abort: vi.fn(),
   discard: vi.fn(),
   history: [] as unknown[],
+  setModel: vi.fn(),
+  meta: {} as Record<string, unknown>,
   store: { list: vi.fn(), load: vi.fn(), delete: vi.fn() }
 }))
 const harness = vi.hoisted(() => ({ toAgentEvents: vi.fn() }))
+const support = vi.hoisted(() => ({
+  listModels: vi.fn(),
+  readDefaultModel: vi.fn(),
+  writeDefaultModel: vi.fn()
+}))
 const environment = process.env as Record<string, string | undefined>
 
 vi.mock('electron', () => ({
@@ -109,9 +116,19 @@ vi.mock('electron', () => ({
 }))
 vi.mock('./agent', () => ({
   createWorkspaceSession: agent.createWorkspaceSession,
-  sessionStore: agent.store
+  sessionStore: agent.store,
+  lefaHome: '/tmp/lefa',
+  DEFAULT_MODEL: 'anthropic/claude-haiku-4.5'
+}))
+vi.mock('./models', () => ({ listModels: support.listModels }))
+vi.mock('./settings', () => ({
+  readDefaultModel: support.readDefaultModel,
+  writeDefaultModel: support.writeDefaultModel
 }))
 vi.mock('@lefa/harness', () => ({ toAgentEvents: harness.toAgentEvents }))
+vi.mock('@ai-sdk/gateway', () => ({
+  GatewayAuthenticationError: { isInstance: (error: unknown) => (error as Error)?.name === 'Auth' }
+}))
 
 function sender(overrides: { destroyed?: boolean } = {}): {
   send: ReturnType<typeof vi.fn>
@@ -125,13 +142,16 @@ async function openSession(id = 'session-1'): Promise<string> {
     id,
     cwd: '/tmp/workspace',
     history: agent.history,
+    meta: agent.meta,
     prompt: agent.prompt,
     abort: agent.abort,
-    discard: agent.discard
+    discard: agent.discard,
+    setModel: agent.setModel
   })
   const openHandler = electron.ipcHandlers.get('session:open')
+  const opened = (await openHandler?.({ sender: sender() }, '/tmp/workspace')) as { id: string }
 
-  return (await openHandler?.({ sender: sender() }, '/tmp/workspace')) as string
+  return opened.id
 }
 
 async function loadMain(options: { packaged?: boolean; rendererUrl?: string } = {}): Promise<void> {
@@ -147,6 +167,15 @@ async function loadMain(options: { packaged?: boolean; rendererUrl?: string } = 
   agent.store.delete.mockResolvedValue(undefined)
   harness.toAgentEvents.mockReset()
   harness.toAgentEvents.mockReturnValue([])
+  agent.setModel.mockReset()
+  agent.setModel.mockResolvedValue(undefined)
+  agent.meta = {}
+  support.listModels.mockReset()
+  support.listModels.mockResolvedValue([])
+  support.readDefaultModel.mockReset()
+  support.readDefaultModel.mockResolvedValue('anthropic/claude-haiku-4.5')
+  support.writeDefaultModel.mockReset()
+  support.writeDefaultModel.mockResolvedValue(undefined)
   electron.app.isPackaged = options.packaged ?? false
 
   if (options.rendererUrl === undefined) {
@@ -179,6 +208,8 @@ describe('desktop main process', () => {
     expect(electron.ipcHandlers.has('session:list')).toBe(true)
     expect(electron.ipcHandlers.has('session:resume')).toBe(true)
     expect(electron.ipcHandlers.has('session:delete')).toBe(true)
+    expect(electron.ipcHandlers.has('session:set-model')).toBe(true)
+    expect(electron.ipcHandlers.has('models:list')).toBe(true)
     expect(electron.ipcHandlers.has('workspace:select-directory')).toBe(true)
     expect(window?.options).toMatchObject({
       width: 1100,
@@ -221,7 +252,10 @@ describe('desktop main process', () => {
     const promptHandler = electron.ipcHandlers.get('session:prompt')
 
     expect(sessionId).toBe('session-1')
-    expect(agent.createWorkspaceSession).toHaveBeenCalledWith('/tmp/workspace')
+    expect(agent.createWorkspaceSession).toHaveBeenCalledWith(
+      '/tmp/workspace',
+      'anthropic/claude-haiku-4.5'
+    )
 
     await expect(
       promptHandler?.({ sender: target }, { sessionId, prompt: 'Help me' })
@@ -331,7 +365,8 @@ describe('desktop main process', () => {
         id: 'session-9',
         cwd: '/tmp/stored',
         createdAt: '2026-08-01T10:00:00.000Z',
-        title: 'Stored'
+        title: 'Stored',
+        model: 'openai/gpt-5.1-codex'
       },
       messages
     })
@@ -349,13 +384,22 @@ describe('desktop main process', () => {
       'session-9'
     )
 
-    expect(agent.createWorkspaceSession).toHaveBeenCalledWith('/tmp/stored', {
+    expect(agent.createWorkspaceSession).toHaveBeenCalledWith(
+      '/tmp/stored',
+      'openai/gpt-5.1-codex',
+      {
+        id: 'session-9',
+        createdAt: '2026-08-01T10:00:00.000Z',
+        title: 'Stored',
+        messages
+      }
+    )
+    expect(restored).toEqual({
       id: 'session-9',
-      createdAt: '2026-08-01T10:00:00.000Z',
-      title: 'Stored',
-      messages
+      cwd: '/tmp/stored',
+      model: 'openai/gpt-5.1-codex',
+      events
     })
-    expect(restored).toEqual({ id: 'session-9', cwd: '/tmp/stored', events })
   })
 
   it('redraws an already-open session from memory rather than from disk', async () => {
@@ -374,6 +418,7 @@ describe('desktop main process', () => {
     expect(restored).toEqual({
       id: sessionId,
       cwd: '/tmp/workspace',
+      model: 'anthropic/claude-haiku-4.5',
       events: [{ type: 'prompt', text: 'In memory' }]
     })
     agent.history = []
@@ -388,8 +433,81 @@ describe('desktop main process', () => {
     expect(agent.discard).toHaveBeenCalledOnce()
     expect(agent.store.delete).toHaveBeenCalledWith(sessionId)
     await expect(
-      electron.ipcHandlers.get('session:prompt')?.({ sender: sender() }, { sessionId, prompt: 'Hi' })
+      electron.ipcHandlers.get('session:prompt')?.(
+        { sender: sender() },
+        { sessionId, prompt: 'Hi' }
+      )
     ).rejects.toThrow('That session is no longer open.')
+  })
+
+  it('opens new sessions on the remembered model', async () => {
+    await loadMain()
+    support.readDefaultModel.mockResolvedValue('openai/gpt-5.1-codex')
+
+    agent.createWorkspaceSession.mockReturnValue({ id: 'session-1', cwd: '/tmp/workspace' })
+    const opened = await electron.ipcHandlers.get('session:open')?.(
+      { sender: sender() },
+      '/tmp/workspace'
+    )
+
+    expect(opened).toEqual({ id: 'session-1', model: 'openai/gpt-5.1-codex' })
+    expect(agent.createWorkspaceSession).toHaveBeenCalledWith(
+      '/tmp/workspace',
+      'openai/gpt-5.1-codex'
+    )
+  })
+
+  it('switches a session model and remembers it for the next one', async () => {
+    await loadMain()
+    const sessionId = await openSession()
+
+    await electron.ipcHandlers.get('session:set-model')?.(
+      { sender: sender() },
+      { sessionId, model: 'anthropic/claude-opus-5' }
+    )
+
+    expect(agent.setModel).toHaveBeenCalledWith('anthropic/claude-opus-5')
+    expect(support.writeDefaultModel).toHaveBeenCalledWith('anthropic/claude-opus-5')
+  })
+
+  it('rejects a model switch for a session that is not open', async () => {
+    await loadMain()
+
+    await expect(
+      electron.ipcHandlers.get('session:set-model')?.(
+        { sender: sender() },
+        { sessionId: 'missing', model: 'anthropic/claude-opus-5' }
+      )
+    ).rejects.toThrow('That session is no longer open.')
+    expect(support.writeDefaultModel).not.toHaveBeenCalled()
+  })
+
+  it('serves the model catalogue', async () => {
+    await loadMain()
+    support.listModels.mockResolvedValue([{ id: 'anthropic/claude-opus-5', name: 'Claude Opus 5' }])
+
+    await expect(electron.ipcHandlers.get('models:list')?.({ sender: sender() })).resolves.toEqual([
+      { id: 'anthropic/claude-opus-5', name: 'Claude Opus 5' }
+    ])
+  })
+
+  it('turns a missing gateway key into an actionable message', async () => {
+    await loadMain()
+    const sessionId = await openSession()
+    const authError = Object.assign(new Error('unauthorized'), { name: 'Auth' })
+    agent.prompt.mockReturnValue(
+      (async function* () {
+        yield { type: 'text', text: 'starting' }
+        throw authError
+      })()
+    )
+
+    await expect(
+      electron.ipcHandlers.get('session:prompt')?.(
+        { sender: sender() },
+        { sessionId, prompt: 'Help me' }
+      )
+    ).rejects.toThrow('No AI Gateway key. Set AI_GATEWAY_API_KEY in apps/desktop/.env.')
   })
 
   it('creates a window on activation only when none remain', async () => {
