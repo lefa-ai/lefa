@@ -36,8 +36,8 @@ async function withStore(run: (store: SessionStore, root: string) => Promise<voi
 describe('session store', () => {
   it('round-trips a conversation across appends', async () => {
     await withStore(async (store) => {
-      await store.append(meta(idA), turn)
-      await store.append(meta(idA), [{ role: 'user', content: 'And now?' }])
+      await store.append(meta(idA), 'test/model', turn)
+      await store.append(meta(idA), 'test/model', [{ role: 'user', content: 'And now?' }])
 
       const record = await store.load(idA)
 
@@ -53,8 +53,8 @@ describe('session store', () => {
 
   it('writes the metadata header exactly once', async () => {
     await withStore(async (store, root) => {
-      await store.append(meta(idA), turn)
-      await store.append(meta(idA), [{ role: 'user', content: 'Again' }])
+      await store.append(meta(idA), 'test/model', turn)
+      await store.append(meta(idA), 'test/model', [{ role: 'user', content: 'Again' }])
 
       const lines = (await readFile(join(root, `${idA}.jsonl`), 'utf8')).trim().split('\n')
 
@@ -65,8 +65,8 @@ describe('session store', () => {
 
   it('lists sessions newest first without reading the conversation', async () => {
     await withStore(async (store, root) => {
-      await store.append(meta(idA, 'Older'), turn)
-      await store.append(meta(idB, 'Newer'), turn)
+      await store.append(meta(idA, 'Older'), 'test/model', turn)
+      await store.append(meta(idB, 'Newer'), 'test/model', turn)
       // Make the ordering unambiguous regardless of filesystem timestamp resolution.
       await appendFile(join(root, `${idB}.jsonl`), '')
       const huge = 'x'.repeat(200_000)
@@ -90,7 +90,7 @@ describe('session store', () => {
 
   it('survives a half-written final line', async () => {
     await withStore(async (store, root) => {
-      await store.append(meta(idA), turn)
+      await store.append(meta(idA), 'test/model', turn)
       const path = join(root, `${idA}.jsonl`)
       const size = (await readFile(path, 'utf8')).length
       await truncate(path, size - 12)
@@ -105,7 +105,7 @@ describe('session store', () => {
 
   it('ignores files that are not readable sessions', async () => {
     await withStore(async (store, root) => {
-      await store.append(meta(idA), turn)
+      await store.append(meta(idA), 'test/model', turn)
       await writeFile(join(root, 'notes.txt'), 'ignored')
       await writeFile(join(root, `${idB}.jsonl`), 'not json at all\n')
       await writeFile(join(root, '33333333-3333-4333-8333-333333333333.jsonl'), '')
@@ -120,7 +120,7 @@ describe('session store', () => {
 
   it('drops lines that parse as JSON but are not valid messages', async () => {
     await withStore(async (store, root) => {
-      await store.append(meta(idA), turn)
+      await store.append(meta(idA), 'test/model', turn)
       const path = join(root, `${idA}.jsonl`)
 
       for (const junk of [
@@ -147,47 +147,33 @@ describe('session store', () => {
         content: 'Cache me',
         providerOptions: { anthropic: { cacheControl: { type: 'ephemeral' } } }
       }
-      await store.append(meta(idA), [withOptions])
+      await store.append(meta(idA), 'test/model', [withOptions])
 
       assert.deepEqual((await store.load(idA)).messages[0], withOptions)
     })
   })
 
-  it('loads a session saved before models were selectable', async () => {
+  it('reopens on the model of the last turn', async () => {
+    await withStore(async (store) => {
+      await store.append(meta(idA), 'anthropic/claude-haiku-4.5', turn)
+      await store.append(meta(idA), 'openai/gpt-5.1-codex', [{ role: 'user', content: 'And now?' }])
+
+      const record = await store.load(idA)
+
+      assert.equal(record.model, 'openai/gpt-5.1-codex')
+      assert.equal(record.messages.length, 3, 'model records are not mistaken for messages')
+    })
+  })
+
+  it('refuses a session whose model was never recorded', async () => {
     await withStore(async (store, root) => {
       await mkdir(root, { recursive: true })
-      const header = JSON.stringify({ type: 'meta', ...meta(idA) })
-      const message = JSON.stringify({ type: 'message', message: turn[0] })
-      await writeFile(join(root, `${idA}.jsonl`), `${header}\n${message}\n`)
+      await writeFile(
+        join(root, `${idA}.jsonl`),
+        `${JSON.stringify({ type: 'meta', ...meta(idA) })}\n`
+      )
 
-      const record = await store.load(idA)
-
-      assert.equal(record.meta.model, undefined)
-      assert.equal(record.messages.length, 1)
-      assert.equal((await store.list())[0]?.id, idA)
-    })
-  })
-
-  it('reopens on the model the conversation ended on', async () => {
-    await withStore(async (store) => {
-      await store.append({ ...meta(idA), model: 'anthropic/claude-haiku-4.5' }, turn)
-      await store.appendModel(idA, 'openai/gpt-5.1-codex')
-      await store.appendModel(idA, 'anthropic/claude-opus-5')
-
-      const record = await store.load(idA)
-
-      assert.equal(record.meta.model, 'anthropic/claude-opus-5')
-      assert.equal(record.messages.length, 2, 'the model records are not mistaken for messages')
-      // Listing reads only the header, so it still reports the original model.
-      assert.equal((await store.list())[0]?.model, 'anthropic/claude-haiku-4.5')
-    })
-  })
-
-  it('ignores a model change for a session that was never saved', async () => {
-    await withStore(async (store) => {
-      await store.appendModel(idA, 'openai/gpt-5.1-codex')
-
-      assert.deepEqual(await store.list(), [])
+      await assert.rejects(() => store.load(idA), /missing its metadata/)
     })
   })
 
@@ -199,7 +185,7 @@ describe('session store', () => {
 
   it('deletes a session and tolerates deleting it twice', async () => {
     await withStore(async (store) => {
-      await store.append(meta(idA), turn)
+      await store.append(meta(idA), 'test/model', turn)
       await store.delete(idA)
       await store.delete(idA)
 
