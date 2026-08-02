@@ -89,4 +89,31 @@ describe('preload bridge', () => {
     await expect(api.workspace.selectDirectory()).resolves.toBe('/tmp/workspace')
     expect(electron.invoke).toHaveBeenCalledWith('workspace:select-directory')
   })
+
+  it('strips the wrapper Electron puts around a handler error', async () => {
+    const api = exposedApi()
+
+    for (const [wrapped, expected] of [
+      [
+        "Error invoking remote method 'session:prompt': Error: No AI Gateway key.",
+        'No AI Gateway key.'
+      ],
+      ["Error invoking remote method 'session:resume': TypeError: Bad shape", 'Bad shape'],
+      ["Error invoking remote method 'models:list': plain text", 'plain text'],
+      ['Something else entirely', 'Something else entirely']
+    ] as const) {
+      electron.invoke.mockRejectedValueOnce(new Error(wrapped))
+
+      await expect(api.session.prompt({ sessionId: 'session-1', prompt: 'hi' })).rejects.toThrow(
+        expected
+      )
+    }
+  })
+
+  it('reports a non-error rejection as text', async () => {
+    const api = exposedApi()
+    electron.invoke.mockRejectedValueOnce('just a string')
+
+    await expect(api.models.list()).rejects.toThrow('just a string')
+  })
 })
