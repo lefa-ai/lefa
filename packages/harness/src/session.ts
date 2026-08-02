@@ -14,6 +14,14 @@ export interface SessionOptions {
   store?: SessionStore
 }
 
+/**
+ * Gateway model ids are plain strings, so a session can record which model it is
+ * running. A model passed as an instance (tests) has no id to record.
+ */
+function modelId(model: LanguageModel): string | undefined {
+  return typeof model === 'string' ? model : undefined
+}
+
 function toTitle(text: string): string {
   const collapsed = text.replace(/\s+/g, ' ').trim()
 
@@ -32,7 +40,8 @@ export class Session {
   readonly cwd: string
   readonly createdAt: string
   private title: string
-  private readonly agent: HarnessAgent
+  private model: string | undefined
+  private agent: HarnessAgent
   private readonly messages: ModelMessage[]
   private readonly store: SessionStore | undefined
   private controller: AbortController | undefined
@@ -43,9 +52,25 @@ export class Session {
     this.cwd = cwd
     this.createdAt = options.createdAt ?? new Date().toISOString()
     this.title = options.title ?? ''
+    this.model = modelId(model)
     this.messages = [...(options.messages ?? [])]
     this.store = options.store
     this.agent = createAgent(model, cwd)
+  }
+
+  /**
+   * Switches the model for the rest of the conversation.
+   *
+   * The history carries over, so a session can start on a cheap model and
+   * escalate without losing its context.
+   */
+  async setModel(model: string): Promise<void> {
+    if (model === this.model) return
+
+    this.model = model
+    this.agent = createAgent(model, this.cwd)
+
+    if (!this.discarded) await this.store?.appendModel(this.id, model)
   }
 
   get isRunning(): boolean {
@@ -57,7 +82,8 @@ export class Session {
       id: this.id,
       cwd: this.cwd,
       createdAt: this.createdAt,
-      title: this.title
+      title: this.title,
+      ...(this.model === undefined ? {} : { model: this.model })
     }
   }
 
