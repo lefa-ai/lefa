@@ -1,17 +1,30 @@
 import { appendFile, mkdir, open, readFile, readdir, rm, stat } from 'node:fs/promises'
 import { join } from 'node:path'
-import type { ModelMessage } from 'ai'
+import { modelMessageSchema, type ModelMessage } from 'ai'
+import * as z from 'zod'
 
 /** Enough to hold the metadata line without ever touching the message body. */
 const HEADER_BYTES = 8 * 1024
 const SESSION_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 
-export interface SessionMeta {
-  id: string
-  cwd: string
-  createdAt: string
-  title: string
-}
+const metaSchema = z.object({
+  type: z.literal('meta'),
+  id: z.string(),
+  cwd: z.string(),
+  createdAt: z.string(),
+  title: z.string()
+})
+
+/**
+ * The message shape is the AI SDK's own schema rather than one we maintain, so
+ * a stored conversation can never drift from what the model call accepts.
+ */
+const messageLineSchema = z.object({
+  type: z.literal('message'),
+  message: modelMessageSchema
+})
+
+export type SessionMeta = Omit<z.infer<typeof metaSchema>, 'type'>
 
 export interface SessionSummary extends SessionMeta {
   updatedAt: string
@@ -22,20 +35,7 @@ export interface SessionRecord {
   messages: ModelMessage[]
 }
 
-function isMeta(value: unknown): value is SessionMeta & { type: 'meta' } {
-  if (!value || typeof value !== 'object') return false
-
-  const line = value as Record<string, unknown>
-  return (
-    line.type === 'meta' &&
-    typeof line.id === 'string' &&
-    typeof line.cwd === 'string' &&
-    typeof line.createdAt === 'string' &&
-    typeof line.title === 'string'
-  )
-}
-
-function parse(line: string): unknown {
+function parseJson(line: string): unknown {
   try {
     return JSON.parse(line)
   } catch {
@@ -43,6 +43,14 @@ function parse(line: string): unknown {
     // instead of the whole session.
     return undefined
   }
+}
+
+function readMeta(line: string): SessionMeta | undefined {
+  const parsed = metaSchema.safeParse(parseJson(line))
+  if (!parsed.success) return undefined
+
+  const { type: _type, ...meta } = parsed.data
+  return meta
 }
 
 /**
@@ -80,20 +88,22 @@ export class SessionStore {
     for (const line of contents.split('\n')) {
       if (!line) continue
 
-      const record = parse(line)
+      const record = parseJson(line)
+      if (record === undefined) continue
 
-      if (isMeta(record)) {
-        meta ??= {
-          id: record.id,
-          cwd: record.cwd,
-          createdAt: record.createdAt,
-          title: record.title
+      if (meta === undefined) {
+        const parsedMeta = metaSchema.safeParse(record)
+
+        if (parsedMeta.success) {
+          const { type: _type, ...rest } = parsedMeta.data
+          meta = rest
+          continue
         }
-      } else if (
-        record &&
-        typeof record === 'object' &&
-        (record as { type?: unknown }).type === 'message'
-      ) {
+      }
+
+      // Validate the shape, then keep the original: zod strips unknown keys, and
+      // a message must round-trip byte for byte or provider options are lost.
+      if (messageLineSchema.safeParse(record).success) {
         messages.push((record as { message: ModelMessage }).message)
       }
     }
@@ -131,18 +141,12 @@ export class SessionStore {
       const newline = header.indexOf('\n')
       if (newline === -1) return undefined
 
-      const meta = parse(header.slice(0, newline))
-      if (!isMeta(meta)) return undefined
+      const meta = readMeta(header.slice(0, newline))
+      if (!meta) return undefined
 
       const { mtime } = await file.stat()
 
-      return {
-        id: meta.id,
-        cwd: meta.cwd,
-        createdAt: meta.createdAt,
-        title: meta.title,
-        updatedAt: mtime.toISOString()
-      }
+      return { ...meta, updatedAt: mtime.toISOString() }
     } finally {
       await file.close()
     }
