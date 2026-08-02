@@ -76,7 +76,7 @@ describe('replay', () => {
 
     assert.deepEqual(toAgentEvents(messages), [
       { type: 'tool-error', toolCallId: 'call-1', message: 'File not found' },
-      { type: 'tool-error', toolCallId: 'call-2', message: '[object Object]' },
+      { type: 'tool-error', toolCallId: 'call-2', message: '{"message":"boom"}' },
       {
         type: 'tool-error',
         toolCallId: 'call-3',
