@@ -12,16 +12,14 @@ const metaSchema = z.object({
   id: z.string(),
   cwd: z.string(),
   createdAt: z.string(),
-  title: z.string(),
-  // Optional on purpose: sessions written before models were selectable, and
-  // any session built on a test model, carry no id. Requiring it would make
-  // those files unloadable.
-  model: z.string().optional()
+  title: z.string()
 })
 
 /**
- * Switching model mid-conversation appends a record rather than rewriting the
- * header, so the log stays append-only and listing still reads only line one.
+ * Each turn records the model that produced it.
+ *
+ * The model is an attribute of what happened, not mutable session metadata, so
+ * it belongs in the log like everything else. Resuming takes the last one.
  */
 const modelLineSchema = z.object({
   type: z.literal('model'),
@@ -45,6 +43,7 @@ export interface SessionSummary extends SessionMeta {
 
 export interface SessionRecord {
   meta: SessionMeta
+  model: string
   messages: ModelMessage[]
 }
 
@@ -81,30 +80,25 @@ export class SessionStore {
     this.root = root
   }
 
-  async append(meta: SessionMeta, messages: readonly ModelMessage[]): Promise<void> {
+  async append(meta: SessionMeta, model: string, messages: readonly ModelMessage[]): Promise<void> {
     await mkdir(this.root, { recursive: true })
 
     const path = this.pathFor(meta.id)
-    const lines = messages.map((message) => JSON.stringify({ type: 'message', message }))
+    const lines = [
+      JSON.stringify({ type: 'model', model }),
+      ...messages.map((message) => JSON.stringify({ type: 'message', message }))
+    ]
 
     if (!(await this.exists(path))) lines.unshift(JSON.stringify({ type: 'meta', ...meta }))
-    if (lines.length === 0) return
 
     await appendFile(path, `${lines.join('\n')}\n`, 'utf8')
-  }
-
-  /** Records a mid-conversation model change. No-op until the session exists. */
-  async appendModel(id: string, model: string): Promise<void> {
-    const path = this.pathFor(id)
-    if (!(await this.exists(path))) return
-
-    await appendFile(path, `${JSON.stringify({ type: 'model', model })}\n`, 'utf8')
   }
 
   async load(id: string): Promise<SessionRecord> {
     const contents = await readFile(this.pathFor(id), 'utf8')
     const messages: ModelMessage[] = []
     let meta: SessionMeta | undefined
+    let model: string | undefined
 
     for (const line of contents.split('\n')) {
       if (!line) continue
@@ -125,8 +119,8 @@ export class SessionStore {
       const parsedModel = modelLineSchema.safeParse(record)
 
       if (parsedModel.success) {
-        // The newest record wins, so the session reopens on the model it ended on.
-        if (meta) meta = { ...meta, model: parsedModel.data.model }
+        // The last turn's model is the one the session resumes on.
+        model = parsedModel.data.model
         continue
       }
 
@@ -137,9 +131,12 @@ export class SessionStore {
       }
     }
 
-    if (!meta) throw new Error(`Session ${id} is missing its metadata.`)
+    // A session without both records is not readable. Files from an older
+    // format are deliberately not supported: no compatibility layer, per
+    // AGENTS.md. Delete ~/.lefa/sessions if the format changes again.
+    if (!meta || !model) throw new Error(`Session ${id} is missing its metadata.`)
 
-    return { meta, messages }
+    return { meta, model, messages }
   }
 
   async list(): Promise<SessionSummary[]> {
