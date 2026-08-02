@@ -6,10 +6,19 @@ import { resolvePath } from './path.ts'
 import type { ExecutableTool } from './tool.ts'
 import { MAX_LINES, splitLines, truncateHead } from './truncate.ts'
 
+/**
+ * Every argument is required.
+ *
+ * A defaulted or optional field is left out of the schema's `required` list,
+ * which OpenAI's strict function calling rejects outright — and Anthropic
+ * tolerates, so it only surfaces when you switch providers. Asking for both
+ * bounds costs nothing: the output is capped at MAX_LINES either way, and a
+ * partial read always tells the model the offset to continue from.
+ */
 const readInputSchema = z.strictObject({
   path: z.string().min(1).describe('Relative or absolute path'),
-  offset: z.number().default(1).describe('First line, starting at 1'),
-  limit: z.number().default(MAX_LINES).describe('Maximum lines')
+  offset: z.number().describe('First line to read, starting at 1'),
+  limit: z.number().describe(`Maximum lines to read, up to ${MAX_LINES}`)
 })
 
 export type ReadInput = z.infer<typeof readInputSchema>

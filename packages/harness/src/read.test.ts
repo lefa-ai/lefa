@@ -4,7 +4,11 @@ import { homedir, tmpdir } from 'node:os'
 import { basename, join } from 'node:path'
 import { describe, it } from 'node:test'
 import { asSchema } from 'ai'
+import { createBashTool } from './bash.ts'
+import { createEditTool } from './edit.ts'
 import { createReadTool, type ReadOutput } from './read.ts'
+import { createWriteTool } from './write.ts'
+import { MAX_LINES } from './truncate.ts'
 
 interface RawReadInput {
   path: string
@@ -21,7 +25,13 @@ function executeRead(
 
   async function execute(): Promise<ReadOutput> {
     const read = createReadTool(cwd)
-    const validation = await asSchema(read.inputSchema).validate?.(input)
+    // Every argument is required, so a test that cares only about `path` still
+    // sends the bounds a model would send.
+    const validation = await asSchema(read.inputSchema).validate?.({
+      offset: 1,
+      limit: MAX_LINES,
+      ...input
+    })
 
     if (validation === undefined) throw new Error('The read tool has no input validator')
     if (!validation.success) throw validation.error
@@ -114,13 +124,14 @@ describe('read tool', () => {
   it('defines the model input and text output', async () => {
     const read = createReadTool('.')
     const schema = asSchema(read.inputSchema)
-    const validation = await schema.validate?.({ path: 'notes.txt' })
+    const validation = await schema.validate?.({ path: 'notes.txt', offset: 1, limit: 2000 })
 
     assert.deepEqual(validation, {
       success: true,
       value: { path: 'notes.txt', offset: 1, limit: 2000 }
     })
     assert.equal((await schema.validate?.({ path: '' }))?.success, false)
+    assert.equal((await schema.validate?.({ path: 'notes.txt' }))?.success, false)
     assert.equal((await schema.validate?.({ path: 'notes.txt', extra: true }))?.success, false)
     assert.ok(read.toModelOutput)
     assert.deepEqual(
@@ -131,6 +142,29 @@ describe('read tool', () => {
       }),
       { type: 'text', value: 'Hello' }
     )
+  })
+
+  it('marks every argument required so strict providers accept the schema', async () => {
+    // OpenAI rejects a function schema whose `required` omits any property, and
+    // a defaulted zod field is omitted. Anthropic accepts either, so only a
+    // provider switch exposes it.
+    const schemas = await Promise.all([
+      asSchema(createReadTool('.').inputSchema).jsonSchema,
+      asSchema(createBashTool('.').inputSchema).jsonSchema,
+      asSchema(createEditTool('.').inputSchema).jsonSchema,
+      asSchema(createWriteTool('.').inputSchema).jsonSchema
+    ])
+
+    for (const jsonSchema of schemas) {
+      const properties = Object.keys(jsonSchema.properties ?? {})
+
+      assert.ok(properties.length > 0)
+      assert.deepEqual(
+        [...(jsonSchema.required ?? [])].sort(),
+        properties.sort(),
+        `every property must be required: ${properties.join(', ')}`
+      )
+    }
   })
 
   it('reads an empty file', async () => {
