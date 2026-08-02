@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import type { LanguageModel, ModelMessage } from 'ai'
+import type { ModelMessage } from 'ai'
 import { createAgent, type HarnessAgent } from './agent.ts'
 import { toAgentEvent, type AgentEvent } from './events.ts'
 import type { SessionMeta, SessionStore } from './session-store.ts'
@@ -12,14 +12,6 @@ export interface SessionOptions {
   title?: string
   messages?: readonly ModelMessage[]
   store?: SessionStore
-}
-
-/**
- * Gateway model ids are plain strings, so a session can record which model it is
- * running. A model passed as an instance (tests) has no id to record.
- */
-function modelId(model: LanguageModel): string | undefined {
-  return typeof model === 'string' ? model : undefined
 }
 
 function toTitle(text: string): string {
@@ -40,37 +32,39 @@ export class Session {
   readonly cwd: string
   readonly createdAt: string
   private title: string
-  private model: string | undefined
+  private currentModel: string
   private agent: HarnessAgent
   private readonly messages: ModelMessage[]
   private readonly store: SessionStore | undefined
   private controller: AbortController | undefined
   private discarded = false
 
-  constructor(model: LanguageModel, cwd: string, options: SessionOptions = {}) {
+  constructor(model: string, cwd: string, options: SessionOptions = {}) {
     this.id = options.id ?? randomUUID()
     this.cwd = cwd
     this.createdAt = options.createdAt ?? new Date().toISOString()
     this.title = options.title ?? ''
-    this.model = modelId(model)
+    this.currentModel = model
     this.messages = [...(options.messages ?? [])]
     this.store = options.store
     this.agent = createAgent(model, cwd)
   }
 
+  get model(): string {
+    return this.currentModel
+  }
+
   /**
    * Switches the model for the rest of the conversation.
    *
-   * The history carries over, so a session can start on a cheap model and
-   * escalate without losing its context.
+   * Nothing is written here: the next turn records the model that produced it,
+   * which is the only place the model is ever stored.
    */
-  async setModel(model: string): Promise<void> {
-    if (model === this.model) return
+  setModel(model: string): void {
+    if (model === this.currentModel) return
 
-    this.model = model
+    this.currentModel = model
     this.agent = createAgent(model, this.cwd)
-
-    if (!this.discarded) await this.store?.appendModel(this.id, model)
   }
 
   get isRunning(): boolean {
@@ -82,8 +76,7 @@ export class Session {
       id: this.id,
       cwd: this.cwd,
       createdAt: this.createdAt,
-      title: this.title,
-      ...(this.model === undefined ? {} : { model: this.model })
+      title: this.title
     }
   }
 
@@ -138,7 +131,7 @@ export class Session {
 
     // The turn already succeeded, so failing to save it must not fail the turn.
     try {
-      await this.store?.append(this.meta, turn)
+      await this.store?.append(this.meta, this.currentModel, turn)
     } catch {
       yield { type: 'error', message: 'Could not save this session to disk.' }
     }

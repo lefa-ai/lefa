@@ -21,7 +21,7 @@ import {
   type SessionSummary,
   type SetModelInput
 } from '../shared/api'
-import { createWorkspaceSession, DEFAULT_MODEL, sessionStore } from './agent'
+import { createWorkspaceSession, sessionStore } from './agent'
 import { listModels } from './models'
 import { readDefaultModel, writeDefaultModel } from './settings'
 
@@ -80,13 +80,12 @@ function registerIpcHandlers(): void {
       return {
         id: open.id,
         cwd: open.cwd,
-        model: open.meta.model ?? DEFAULT_MODEL,
+        model: open.model,
         events: toAgentEvents(open.history)
       }
     }
 
-    const { meta, messages } = await sessionStore.load(sessionId)
-    const model = meta.model ?? DEFAULT_MODEL
+    const { meta, model, messages } = await sessionStore.load(sessionId)
     const session = createWorkspaceSession(meta.cwd, model, {
       id: meta.id,
       createdAt: meta.createdAt,
@@ -103,7 +102,7 @@ function registerIpcHandlers(): void {
 
     if (!session) throw new Error('That session is no longer open.')
 
-    await session.setModel(input.model)
+    session.setModel(input.model)
     // The latest choice also becomes the default for the next new session.
     await writeDefaultModel(input.model)
   })

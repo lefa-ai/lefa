@@ -97,7 +97,7 @@ const agent = vi.hoisted(() => ({
   discard: vi.fn(),
   history: [] as unknown[],
   setModel: vi.fn(),
-  meta: {} as Record<string, unknown>,
+  model: 'anthropic/claude-haiku-4.5',
   store: { list: vi.fn(), load: vi.fn(), delete: vi.fn() }
 }))
 const harness = vi.hoisted(() => ({ toAgentEvents: vi.fn() }))
@@ -142,7 +142,7 @@ async function openSession(id = 'session-1'): Promise<string> {
     id,
     cwd: '/tmp/workspace',
     history: agent.history,
-    meta: agent.meta,
+    model: agent.model,
     prompt: agent.prompt,
     abort: agent.abort,
     discard: agent.discard,
@@ -169,7 +169,7 @@ async function loadMain(options: { packaged?: boolean; rendererUrl?: string } = 
   harness.toAgentEvents.mockReturnValue([])
   agent.setModel.mockReset()
   agent.setModel.mockResolvedValue(undefined)
-  agent.meta = {}
+  agent.model = 'anthropic/claude-haiku-4.5'
   support.listModels.mockReset()
   support.listModels.mockResolvedValue([])
   support.readDefaultModel.mockReset()
@@ -365,9 +365,9 @@ describe('desktop main process', () => {
         id: 'session-9',
         cwd: '/tmp/stored',
         createdAt: '2026-08-01T10:00:00.000Z',
-        title: 'Stored',
-        model: 'openai/gpt-5.1-codex'
+        title: 'Stored'
       },
+      model: 'openai/gpt-5.1-codex',
       messages
     })
     agent.createWorkspaceSession.mockReturnValue({

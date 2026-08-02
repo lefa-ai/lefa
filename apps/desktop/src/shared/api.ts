@@ -30,7 +30,6 @@ export interface SessionSummary {
   createdAt: string
   updatedAt: string
   title: string
-  model?: string
 }
 
 /** A language model offered by the AI Gateway. */

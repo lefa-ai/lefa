@@ -3,6 +3,7 @@ import { mkdtemp, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, it } from 'node:test'
+import { customProvider } from 'ai'
 import { convertArrayToReadableStream, MockLanguageModelV3 } from 'ai/test'
 import type { AgentEvent } from './events.ts'
 import { SessionStore } from './session-store.ts'
@@ -66,6 +67,18 @@ function openResponse(): {
   return { response: { stream }, push: (part) => controller.enqueue(part) }
 }
 
+/**
+ * Sessions run on Gateway model ids, so a test model is registered as the
+ * default provider rather than smuggled in as an object.
+ */
+function useModel(model: MockLanguageModelV3, id = 'test/model'): string {
+  globalThis.AI_SDK_DEFAULT_PROVIDER = customProvider({
+    languageModels: { [id]: model }
+  })
+
+  return id
+}
+
 async function withWorkspace(run: (cwd: string) => Promise<void>): Promise<void> {
   const cwd = await mkdtemp(join(tmpdir(), 'lefa-session-'))
 
@@ -83,12 +96,12 @@ function promptText(prompt: unknown): string {
 describe('session', () => {
   it('identifies itself and its workspace', async () => {
     await withWorkspace(async (cwd) => {
-      const session = new Session(new MockLanguageModelV3(), cwd)
+      const session = new Session(useModel(new MockLanguageModelV3()), cwd)
 
       assert.equal(session.cwd, cwd)
       assert.match(session.id, /^[0-9a-f-]{36}$/)
       assert.equal(session.isRunning, false)
-      assert.notEqual(session.id, new Session(new MockLanguageModelV3(), cwd).id)
+      assert.notEqual(session.id, new Session(useModel(new MockLanguageModelV3()), cwd).id)
     })
   })
 
@@ -97,7 +110,7 @@ describe('session', () => {
       const model = new MockLanguageModelV3({
         doStream: [textResponse('Two files.'), textResponse('It holds the readme.')]
       })
-      const session = new Session(model, cwd)
+      const session = new Session(useModel(model), cwd)
 
       for await (const _event of session.prompt('List the files')) void _event
       for await (const _event of session.prompt('What is in the first one?')) void _event
@@ -116,7 +129,7 @@ describe('session', () => {
       const model = new MockLanguageModelV3({
         doStream: [textResponse('Done')]
       })
-      const session = new Session(model, cwd)
+      const session = new Session(useModel(model), cwd)
       const run = session.prompt('Help me')
 
       await run.next()
@@ -132,7 +145,7 @@ describe('session', () => {
       const model = new MockLanguageModelV3({
         doStream: [textResponse('Done')]
       })
-      const session = new Session(model, cwd)
+      const session = new Session(useModel(model), cwd)
       const run = session.prompt('Help me')
       await run.next()
 
@@ -154,7 +167,7 @@ describe('session', () => {
           textResponse('Picking up where we left off.')
         ]
       })
-      const session = new Session(model, cwd)
+      const session = new Session(useModel(model), cwd)
       const events: AgentEvent[] = []
 
       interrupted.push({ type: 'stream-start', warnings: [] })
@@ -202,7 +215,7 @@ describe('session', () => {
         const model = new MockLanguageModelV3({
           doStream: [interrupted.response, textResponse('Ready')]
         })
-        const session = new Session(model, cwd)
+        const session = new Session(useModel(model), cwd)
         const events: AgentEvent[] = []
 
         interrupted.push({ type: 'stream-start', warnings: [] })
@@ -247,7 +260,7 @@ describe('session', () => {
           throw new Error('Rate limited')
         }
       })
-      const session = new Session(model, cwd)
+      const session = new Session(useModel(model), cwd)
 
       await assert.rejects(async () => {
         for await (const _event of session.prompt('Help me')) void _event
@@ -267,7 +280,7 @@ describe('session', () => {
           return textResponse('Recovered')
         }
       })
-      const session = new Session(model, cwd)
+      const session = new Session(useModel(model), cwd)
 
       await assert.rejects(async () => {
         for await (const _event of session.prompt('First attempt')) void _event
@@ -291,7 +304,7 @@ describe('session', () => {
         const model = new MockLanguageModelV3({
           doStream: [textResponse('Two files.')]
         })
-        const session = new Session(model, cwd, { store })
+        const session = new Session(useModel(model), cwd, { store })
 
         for await (const _event of session.prompt('List the files')) void _event
 
@@ -299,12 +312,13 @@ describe('session', () => {
 
         assert.equal(saved.meta.cwd, cwd)
         assert.equal(saved.meta.title, 'List the files', 'the first prompt titles the session')
+        assert.equal(saved.model, 'test/model')
         assert.equal(saved.messages.length, 2)
 
         const resumedModel = new MockLanguageModelV3({
           doStream: [textResponse('The readme.')]
         })
-        const resumed = new Session(resumedModel, saved.meta.cwd, {
+        const resumed = new Session(useModel(resumedModel), saved.meta.cwd, {
           id: saved.meta.id,
           messages: saved.messages,
           store
@@ -331,26 +345,32 @@ describe('session', () => {
       try {
         const store = new SessionStore(root)
         const interrupted = openResponse()
-        const model = new MockLanguageModelV3({ doStream: [interrupted.response] })
-        const session = new Session(model, cwd, { store })
+        const model = new MockLanguageModelV3({
+          doStream: [interrupted.response]
+        })
+        const session = new Session(useModel(model), cwd, { store })
 
         interrupted.push({ type: 'stream-start', warnings: [] })
         interrupted.push({ type: 'text-start', id: 'text-1' })
-        interrupted.push({ type: 'text-delta', id: 'text-1', delta: 'Working' })
+        interrupted.push({
+          type: 'text-delta',
+          id: 'text-1',
+          delta: 'Working'
+        })
 
         for await (const event of session.prompt('Start something')) {
           if (event.type !== 'text') continue
 
           // Stands in for deleting the session while its run is still going.
           session.discard()
-          interrupted.push({ type: 'text-delta', id: 'text-1', delta: ' on it' })
+          interrupted.push({
+            type: 'text-delta',
+            id: 'text-1',
+            delta: ' on it'
+          })
         }
 
-        assert.deepEqual(
-          await store.list(),
-          [],
-          'a discarded session must not resurrect its file'
-        )
+        assert.deepEqual(await store.list(), [], 'a discarded session must not resurrect its file')
       } finally {
         await rm(root, { recursive: true, force: true })
       }
@@ -363,52 +383,51 @@ describe('session', () => {
 
       try {
         const store = new SessionStore(root)
-        const first = new MockLanguageModelV3({ doStream: [textResponse('From the first model')] })
-        const session = new Session(first, cwd, { store })
+        const first = new MockLanguageModelV3({
+          doStream: [textResponse('From the first model')]
+        })
+        const session = new Session(useModel(first), cwd, { store })
 
         for await (const _event of session.prompt('Start here')) void _event
-        await session.setModel('openai/gpt-5.1-codex')
+        assert.equal((await store.load(session.id)).model, 'test/model')
 
-        assert.equal(session.meta.model, 'openai/gpt-5.1-codex')
-        assert.equal(
-          (await store.load(session.id)).meta.model,
-          'openai/gpt-5.1-codex',
-          'the change is durable'
-        )
-        assert.equal(
-          (await store.load(session.id)).messages.length,
-          2,
-          'switching model does not disturb the conversation'
-        )
+        const second = new MockLanguageModelV3({
+          doStream: [textResponse('From the second')]
+        })
+        session.setModel(useModel(second, 'test/second'))
+        assert.equal(session.model, 'test/second')
+
+        for await (const _event of session.prompt('And now')) void _event
+        const saved = await store.load(session.id)
+
+        assert.equal(second.doStreamCalls.length, 1, 'the next turn runs on the new model')
+        assert.equal(saved.model, 'test/second', 'the session resumes on it')
+        assert.equal(saved.messages.length, 4, 'the conversation carries over')
+        assert.match(promptText(second.doStreamCalls[0]?.prompt), /Start here/)
       } finally {
         await rm(root, { recursive: true, force: true })
       }
     })
   })
 
-  it('records the model id when the session runs on one', async () => {
-    await withWorkspace(async (cwd) => {
-      assert.equal(new Session('anthropic/claude-haiku-4.5', cwd).meta.model, 'anthropic/claude-haiku-4.5')
-      assert.equal(new Session(new MockLanguageModelV3(), cwd).meta.model, undefined)
-    })
-  })
-
-  it('ignores a switch to the model already in use', async () => {
+  it('records the model with every turn', async () => {
     await withWorkspace(async (cwd) => {
       const root = await mkdtemp(join(tmpdir(), 'lefa-session-same-'))
 
       try {
         const store = new SessionStore(root)
-        const model = new MockLanguageModelV3({ doStream: [textResponse('Done')] })
-        const session = new Session(model, cwd, { store })
+        const model = new MockLanguageModelV3({
+          doStream: [textResponse('One'), textResponse('Two')]
+        })
+        const session = new Session(useModel(model), cwd, { store })
 
-        for await (const _event of session.prompt('Start here')) void _event
-        await session.setModel('anthropic/claude-opus-5')
-        await session.setModel('anthropic/claude-opus-5')
+        for await (const _event of session.prompt('First')) void _event
+        for await (const _event of session.prompt('Second')) void _event
 
         const contents = await readFile(join(root, `${session.id}.jsonl`), 'utf8')
 
-        assert.equal(contents.split('"type":"model"').length - 1, 1, 'only one record is written')
+        assert.equal(contents.split('"type":"model"').length - 1, 2, 'one record per turn')
+        assert.equal((await store.load(session.id)).model, 'test/model')
       } finally {
         await rm(root, { recursive: true, force: true })
       }
@@ -421,7 +440,7 @@ describe('session', () => {
       const model = new MockLanguageModelV3({
         doStream: [textResponse('Done'), textResponse('Still here')]
       })
-      const session = new Session(model, cwd, { store })
+      const session = new Session(useModel(model), cwd, { store })
       const events: AgentEvent[] = []
 
       for await (const event of session.prompt('Help me')) events.push(event)
