@@ -28,7 +28,9 @@ function deferred<T>() {
 }
 
 const selectDirectory = vi.fn<() => Promise<string | null>>()
-const openSession = vi.fn<(cwd: string) => Promise<string>>()
+const openSession = vi.fn<(cwd: string) => Promise<{ id: string; model: string }>>()
+const setSessionModel = vi.fn<(input: { sessionId: string; model: string }) => Promise<void>>()
+const listModels = vi.fn<() => Promise<readonly { id: string; name: string }[]>>()
 const promptSession = vi.fn<(input: { sessionId: string; prompt: string }) => Promise<void>>()
 const abortSession = vi.fn<(sessionId: string) => Promise<void>>()
 const listSessions = vi.fn<() => Promise<readonly SessionSummary[]>>()
@@ -65,7 +67,14 @@ async function run(user: ReturnType<typeof userEvent.setup>, text: string): Prom
 beforeEach(() => {
   selectDirectory.mockReset()
   openSession.mockReset()
-  openSession.mockResolvedValue('session-1')
+  openSession.mockResolvedValue({ id: 'session-1', model: 'anthropic/claude-haiku-4.5' })
+  setSessionModel.mockReset()
+  setSessionModel.mockResolvedValue(undefined)
+  listModels.mockReset()
+  listModels.mockResolvedValue([
+    { id: 'anthropic/claude-haiku-4.5', name: 'Claude Haiku 4.5' },
+    { id: 'openai/gpt-5.1-codex', name: 'GPT-5.1 Codex' }
+  ])
   promptSession.mockReset()
   promptSession.mockResolvedValue(undefined)
   abortSession.mockReset()
@@ -86,6 +95,7 @@ beforeEach(() => {
         abort: abortSession,
         list: listSessions,
         resume: resumeSession,
+        setModel: setSessionModel,
         delete: deleteSession,
         onEvent: (listener: (event: SessionEvent) => void) => {
           listeners.push(listener)
@@ -96,6 +106,7 @@ beforeEach(() => {
           }
         }
       },
+      models: { list: listModels },
       workspace: { selectDirectory }
     }
   })
@@ -222,7 +233,9 @@ describe('App', () => {
 
   it('keeps the conversation across turns and clears it for a new workspace', async () => {
     selectDirectory.mockResolvedValueOnce('/tmp/one').mockResolvedValueOnce('/tmp/two')
-    openSession.mockResolvedValueOnce('session-1').mockResolvedValueOnce('session-2')
+    openSession
+      .mockResolvedValueOnce({ id: 'session-1', model: 'anthropic/claude-haiku-4.5' })
+      .mockResolvedValueOnce({ id: 'session-2', model: 'anthropic/claude-haiku-4.5' })
     const user = userEvent.setup()
     render(<App />)
 
@@ -285,15 +298,31 @@ describe('App', () => {
   })
 
   it('shows and recovers from an agent failure', async () => {
-    promptSession.mockRejectedValueOnce(new Error('agent failed')).mockResolvedValue(undefined)
+    promptSession
+      .mockRejectedValueOnce(
+        new Error('No AI Gateway key. Set AI_GATEWAY_API_KEY in apps/desktop/.env.')
+      )
+      .mockResolvedValue(undefined)
+    const user = await openWorkspace()
+
+    await run(user, 'run')
+
+    // The provider's own message is the only actionable part; boilerplate hides it.
+    expect((await screen.findByRole('alert')).textContent).toBe(
+      'No AI Gateway key. Set AI_GATEWAY_API_KEY in apps/desktop/.env.'
+    )
+
+    await run(user, 'again')
+    await waitFor(() => expect(screen.queryByRole('alert')).toBeNull())
+  })
+
+  it('falls back to a generic message when a failure carries none', async () => {
+    promptSession.mockRejectedValueOnce(new Error('   '))
     const user = await openWorkspace()
 
     await run(user, 'run')
 
     expect((await screen.findByRole('alert')).textContent).toBe('Unable to run the agent.')
-
-    await run(user, 'again')
-    await waitFor(() => expect(screen.queryByRole('alert')).toBeNull())
   })
 
   it('lists saved sessions and resumes one with its stored transcript', async () => {
@@ -309,6 +338,7 @@ describe('App', () => {
     resumeSession.mockResolvedValue({
       id: 'session-7',
       cwd: '/tmp/other-repo',
+      model: 'openai/gpt-5.1-codex',
       events: [
         { type: 'prompt', text: 'What is here?' },
         { type: 'text', text: 'Two files.' }
