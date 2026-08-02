@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { mkdtemp, rm } from 'node:fs/promises'
+import { mkdtemp, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, it } from 'node:test'
@@ -351,6 +351,64 @@ describe('session', () => {
           [],
           'a discarded session must not resurrect its file'
         )
+      } finally {
+        await rm(root, { recursive: true, force: true })
+      }
+    })
+  })
+
+  it('switches model mid-conversation and keeps the history', async () => {
+    await withWorkspace(async (cwd) => {
+      const root = await mkdtemp(join(tmpdir(), 'lefa-session-model-'))
+
+      try {
+        const store = new SessionStore(root)
+        const first = new MockLanguageModelV3({ doStream: [textResponse('From the first model')] })
+        const session = new Session(first, cwd, { store })
+
+        for await (const _event of session.prompt('Start here')) void _event
+        await session.setModel('openai/gpt-5.1-codex')
+
+        assert.equal(session.meta.model, 'openai/gpt-5.1-codex')
+        assert.equal(
+          (await store.load(session.id)).meta.model,
+          'openai/gpt-5.1-codex',
+          'the change is durable'
+        )
+        assert.equal(
+          (await store.load(session.id)).messages.length,
+          2,
+          'switching model does not disturb the conversation'
+        )
+      } finally {
+        await rm(root, { recursive: true, force: true })
+      }
+    })
+  })
+
+  it('records the model id when the session runs on one', async () => {
+    await withWorkspace(async (cwd) => {
+      assert.equal(new Session('anthropic/claude-haiku-4.5', cwd).meta.model, 'anthropic/claude-haiku-4.5')
+      assert.equal(new Session(new MockLanguageModelV3(), cwd).meta.model, undefined)
+    })
+  })
+
+  it('ignores a switch to the model already in use', async () => {
+    await withWorkspace(async (cwd) => {
+      const root = await mkdtemp(join(tmpdir(), 'lefa-session-same-'))
+
+      try {
+        const store = new SessionStore(root)
+        const model = new MockLanguageModelV3({ doStream: [textResponse('Done')] })
+        const session = new Session(model, cwd, { store })
+
+        for await (const _event of session.prompt('Start here')) void _event
+        await session.setModel('anthropic/claude-opus-5')
+        await session.setModel('anthropic/claude-opus-5')
+
+        const contents = await readFile(join(root, `${session.id}.jsonl`), 'utf8')
+
+        assert.equal(contents.split('"type":"model"').length - 1, 1, 'only one record is written')
       } finally {
         await rm(root, { recursive: true, force: true })
       }

@@ -12,7 +12,20 @@ const metaSchema = z.object({
   id: z.string(),
   cwd: z.string(),
   createdAt: z.string(),
-  title: z.string()
+  title: z.string(),
+  // Optional on purpose: sessions written before models were selectable, and
+  // any session built on a test model, carry no id. Requiring it would make
+  // those files unloadable.
+  model: z.string().optional()
+})
+
+/**
+ * Switching model mid-conversation appends a record rather than rewriting the
+ * header, so the log stays append-only and listing still reads only line one.
+ */
+const modelLineSchema = z.object({
+  type: z.literal('model'),
+  model: z.string()
 })
 
 /**
@@ -80,6 +93,14 @@ export class SessionStore {
     await appendFile(path, `${lines.join('\n')}\n`, 'utf8')
   }
 
+  /** Records a mid-conversation model change. No-op until the session exists. */
+  async appendModel(id: string, model: string): Promise<void> {
+    const path = this.pathFor(id)
+    if (!(await this.exists(path))) return
+
+    await appendFile(path, `${JSON.stringify({ type: 'model', model })}\n`, 'utf8')
+  }
+
   async load(id: string): Promise<SessionRecord> {
     const contents = await readFile(this.pathFor(id), 'utf8')
     const messages: ModelMessage[] = []
@@ -99,6 +120,14 @@ export class SessionStore {
           meta = rest
           continue
         }
+      }
+
+      const parsedModel = modelLineSchema.safeParse(record)
+
+      if (parsedModel.success) {
+        // The newest record wins, so the session reopens on the model it ended on.
+        if (meta) meta = { ...meta, model: parsedModel.data.model }
+        continue
       }
 
       // Validate the shape, then keep the original: zod strips unknown keys, and

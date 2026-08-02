@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { appendFile, mkdtemp, readFile, rm, truncate, writeFile } from 'node:fs/promises'
+import { appendFile, mkdir, mkdtemp, readFile, rm, truncate, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, it } from 'node:test'
@@ -150,6 +150,44 @@ describe('session store', () => {
       await store.append(meta(idA), [withOptions])
 
       assert.deepEqual((await store.load(idA)).messages[0], withOptions)
+    })
+  })
+
+  it('loads a session saved before models were selectable', async () => {
+    await withStore(async (store, root) => {
+      await mkdir(root, { recursive: true })
+      const header = JSON.stringify({ type: 'meta', ...meta(idA) })
+      const message = JSON.stringify({ type: 'message', message: turn[0] })
+      await writeFile(join(root, `${idA}.jsonl`), `${header}\n${message}\n`)
+
+      const record = await store.load(idA)
+
+      assert.equal(record.meta.model, undefined)
+      assert.equal(record.messages.length, 1)
+      assert.equal((await store.list())[0]?.id, idA)
+    })
+  })
+
+  it('reopens on the model the conversation ended on', async () => {
+    await withStore(async (store) => {
+      await store.append({ ...meta(idA), model: 'anthropic/claude-haiku-4.5' }, turn)
+      await store.appendModel(idA, 'openai/gpt-5.1-codex')
+      await store.appendModel(idA, 'anthropic/claude-opus-5')
+
+      const record = await store.load(idA)
+
+      assert.equal(record.meta.model, 'anthropic/claude-opus-5')
+      assert.equal(record.messages.length, 2, 'the model records are not mistaken for messages')
+      // Listing reads only the header, so it still reports the original model.
+      assert.equal((await store.list())[0]?.model, 'anthropic/claude-haiku-4.5')
+    })
+  })
+
+  it('ignores a model change for a session that was never saved', async () => {
+    await withStore(async (store) => {
+      await store.appendModel(idA, 'openai/gpt-5.1-codex')
+
+      assert.deepEqual(await store.list(), [])
     })
   })
 
