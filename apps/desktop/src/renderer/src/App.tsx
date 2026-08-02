@@ -4,6 +4,7 @@ import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
 import type { SessionSummary } from '../../shared/api'
 import { Conversation } from './components/conversation'
+import { ModelPicker } from './components/model-picker'
 import { SessionList } from './components/session-list'
 import { buildTranscript, reduceTranscript, type TranscriptItem } from './transcript'
 
@@ -11,6 +12,7 @@ function App(): React.JSX.Element {
   const [sessions, setSessions] = useState<readonly SessionSummary[]>([])
   const [workspacePath, setWorkspacePath] = useState<string | null>(null)
   const [sessionId, setSessionId] = useState<string | null>(null)
+  const [model, setModel] = useState<string | null>(null)
   const [prompt, setPrompt] = useState('')
   const [items, setItems] = useState<readonly TranscriptItem[]>([])
   const [isSelecting, setIsSelecting] = useState(false)
@@ -63,7 +65,10 @@ function App(): React.JSX.Element {
       const path = await window.lefa.workspace.selectDirectory()
 
       if (path) {
-        setSessionId(await window.lefa.session.open(path))
+        const opened = await window.lefa.session.open(path)
+
+        setSessionId(opened.id)
+        setModel(opened.model)
         setWorkspacePath(path)
         setItems([])
       }
@@ -82,6 +87,7 @@ function App(): React.JSX.Element {
       const restored = await window.lefa.session.resume(id)
 
       setSessionId(restored.id)
+      setModel(restored.model)
       setWorkspacePath(restored.cwd)
       setItems(buildTranscript(restored.events))
     } catch {
@@ -97,6 +103,7 @@ function App(): React.JSX.Element {
 
       if (id === sessionId) {
         setSessionId(null)
+        setModel(null)
         setWorkspacePath(null)
         setItems([])
       }
@@ -120,8 +127,12 @@ function App(): React.JSX.Element {
 
     try {
       await window.lefa.session.prompt({ sessionId, prompt: text })
-    } catch {
-      setError('Unable to run the agent.')
+    } catch (failure) {
+      // Provider failures carry the only useful detail — a missing key, an
+      // unavailable model — so show what came back rather than boilerplate.
+      const message = failure instanceof Error ? failure.message.trim() : ''
+
+      setError(message || 'Unable to run the agent.')
     } finally {
       setIsRunning(false)
       await refreshSessions()
@@ -135,6 +146,20 @@ function App(): React.JSX.Element {
       await window.lefa.session.abort(sessionId)
     } catch {
       setError('Unable to stop the agent.')
+    }
+  }
+
+  const changeModel = async (next: string): Promise<void> => {
+    if (!sessionId) return
+
+    const previous = model
+    setModel(next)
+
+    try {
+      await window.lefa.session.setModel({ sessionId, model: next })
+    } catch {
+      setModel(previous)
+      setError('Unable to switch model.')
     }
   }
 
@@ -183,7 +208,8 @@ function App(): React.JSX.Element {
                     onKeyDown={submitOnEnter}
                     className="max-h-56 min-h-0 resize-none border-0 bg-transparent shadow-none focus-visible:ring-0 dark:bg-transparent"
                   />
-                  <div className="flex justify-end px-1 pb-1">
+                  <div className="flex items-center justify-between gap-2 px-1 pb-1">
+                    {model && <ModelPicker model={model} onChange={changeModel} />}
                     {isRunning ? (
                       <Button type="button" size="sm" variant="secondary" onClick={stopAgent}>
                         <SquareIcon />
