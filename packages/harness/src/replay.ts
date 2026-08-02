@@ -1,41 +1,57 @@
 import type { ModelMessage } from 'ai'
 import type { AgentEvent } from './events.ts'
 
-type Part = Record<string, unknown>
+type AssistantContent = Extract<ModelMessage, { role: 'assistant' }>['content']
+type ToolContent = Extract<ModelMessage, { role: 'tool' }>['content']
+type ToolResultOutput = Extract<ToolContent[number], { type: 'tool-result' }>['output']
 
-function textOf(content: unknown): string {
+function promptText(content: Extract<ModelMessage, { role: 'user' }>['content']): string {
   if (typeof content === 'string') return content
-  if (!Array.isArray(content)) return ''
 
   return content
-    .filter((part: Part) => part?.type === 'text')
-    .map((part: Part) => String(part.value ?? part.text ?? ''))
+    .filter((part) => part.type === 'text')
+    .map((part) => part.text)
     .join('')
 }
 
-function toolResultEvent(part: Part): AgentEvent | undefined {
-  const toolCallId = part.toolCallId
-  if (typeof toolCallId !== 'string') return undefined
+function toolOutputEvent(toolCallId: string, output: ToolResultOutput): AgentEvent {
+  switch (output.type) {
+    case 'error-text':
+      return { type: 'tool-error', toolCallId, message: output.value }
+    case 'error-json':
+      return { type: 'tool-error', toolCallId, message: JSON.stringify(output.value) }
+    case 'execution-denied':
+      return {
+        type: 'tool-error',
+        toolCallId,
+        message: output.reason ?? 'Tool execution was denied.'
+      }
+    default:
+      return { type: 'tool-result', toolCallId, output: output.value }
+  }
+}
 
-  const output = part.output as Part | undefined
-  const type = output?.type
+function assistantEvents(content: AssistantContent): AgentEvent[] {
+  if (typeof content === 'string') {
+    return content ? [{ type: 'text', text: content }] : []
+  }
 
-  if (type === 'error-text' || type === 'error-json') {
-    return {
-      type: 'tool-error',
-      toolCallId,
-      message: String(output?.value ?? 'Tool failed.')
+  const events: AgentEvent[] = []
+
+  for (const part of content) {
+    if (part.type === 'text') {
+      events.push({ type: 'text', text: part.text })
+    } else if (part.type === 'tool-call') {
+      events.push({
+        type: 'tool-call',
+        toolCallId: part.toolCallId,
+        toolName: part.toolName,
+        input: part.input
+      })
     }
   }
-  if (type === 'execution-denied') {
-    return {
-      type: 'tool-error',
-      toolCallId,
-      message: 'Tool execution was denied.'
-    }
-  }
 
-  return { type: 'tool-result', toolCallId, output: output?.value ?? output }
+  return events
 }
 
 /**
@@ -48,41 +64,22 @@ export function toAgentEvents(messages: readonly ModelMessage[]): AgentEvent[] {
   const events: AgentEvent[] = []
 
   for (const message of messages) {
-    if (message.role === 'user') {
-      events.push({ type: 'prompt', text: textOf(message.content) })
-      continue
-    }
-
-    if (message.role === 'assistant') {
-      const content = message.content
-
-      if (typeof content === 'string') {
-        if (content) events.push({ type: 'text', text: content })
-        continue
-      }
-
-      for (const item of content as Part[]) {
-        if (item?.type === 'text') {
-          events.push({ type: 'text', text: String(item.text ?? '') })
-        } else if (item?.type === 'tool-call' && typeof item.toolCallId === 'string') {
-          events.push({
-            type: 'tool-call',
-            toolCallId: item.toolCallId,
-            toolName: String(item.toolName ?? ''),
-            input: item.input
-          })
+    switch (message.role) {
+      case 'user':
+        events.push({ type: 'prompt', text: promptText(message.content) })
+        break
+      case 'assistant':
+        events.push(...assistantEvents(message.content))
+        break
+      case 'tool':
+        for (const part of message.content) {
+          if (part.type === 'tool-result') {
+            events.push(toolOutputEvent(part.toolCallId, part.output))
+          }
         }
-      }
-      continue
-    }
-
-    if (message.role === 'tool') {
-      for (const item of message.content as Part[]) {
-        if (item?.type !== 'tool-result') continue
-
-        const event = toolResultEvent(item)
-        if (event) events.push(event)
-      }
+        break
+      default:
+        break
     }
   }
 
