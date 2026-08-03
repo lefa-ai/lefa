@@ -117,15 +117,18 @@ export class Session {
         abortSignal: controller.signal
       })
 
-      // A provider failure is masked into a chunk rather than thrown, which
-      // would turn a missing key into a silent turn that answered nothing. The
-      // real error is caught on the way past and raised once the stream ends.
-      let failure: unknown
-      const keep = (error: unknown): string => {
-        failure ??= error
-
-        return error instanceof Error ? error.message : String(error)
-      }
+      // Two different things end up at an error handler here, and only one of
+      // them means the turn failed.
+      //
+      // A tool that throws is ordinary: it becomes a failed tool part, the
+      // model reads it and carries on. Only a stream-level failure — a missing
+      // key, an unreachable provider — ends the turn, and that is what the
+      // reader reports. The writer's handler is a formatter, called for both,
+      // so it keeps the error itself without deciding anything: the reader has
+      // no access to the original, and only the original still knows what kind
+      // of failure it was.
+      let seen: unknown
+      let failed = false
 
       const replies = readUIMessageStream({
         stream: toUIMessageStream({
@@ -133,9 +136,15 @@ export class Session {
           tools: this.tools,
           generateMessageId: () => randomUUID(),
           messageMetadata: () => ({ model: this.currentModel }),
-          onError: keep
+          onError: (error) => {
+            seen = error
+
+            return error instanceof Error ? error.message : String(error)
+          }
         }),
-        onError: keep
+        onError: () => {
+          failed = true
+        }
       })
 
       let started = false
@@ -161,7 +170,7 @@ export class Session {
       const last = this.conversation.at(-1)
       if (started && last?.role === 'assistant') await this.write(last, false)
 
-      if (failure !== undefined) throw failure
+      if (failed) throw seen ?? new Error('The model stopped without answering.')
     } finally {
       this.controller = undefined
     }

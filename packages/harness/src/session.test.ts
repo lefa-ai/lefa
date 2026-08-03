@@ -257,6 +257,39 @@ describe('session', () => {
     })
   })
 
+  it('treats a failing tool as something said, not as a failed turn', async () => {
+    await withWorkspace(async (cwd) => {
+      const model = new MockLanguageModelV3({
+        // Reading a file that is not there is ordinary: the model sees the
+        // failure and carries on. Only the turn itself failing is a failure.
+        doStream: [
+          {
+            stream: convertArrayToReadableStream<StreamPart>([
+              { type: 'stream-start', warnings: [] },
+              {
+                type: 'tool-call',
+                toolCallId: 'read-1',
+                toolName: 'read',
+                input: JSON.stringify({ path: 'nowhere.txt' })
+              },
+              { type: 'finish', finishReason: { unified: 'tool-calls', raw: undefined }, usage }
+            ])
+          },
+          textResponse('That file does not exist.')
+        ]
+      })
+      const session = new Session(useModel(model), cwd)
+
+      const seen = await drain(session, 'Read nowhere.txt')
+
+      assert.equal(textOf(seen.at(-1)), 'That file does not exist.')
+      const failedTool = session.messages
+        .flatMap((message) => message.parts)
+        .find((part) => part.type.startsWith('tool-'))
+      assert.equal((failedTool as { state?: string })?.state, 'output-error')
+    })
+  })
+
   it('refuses to start a second turn while one is running', async () => {
     await withWorkspace(async (cwd) => {
       const model = new MockLanguageModelV3({ doStream: [textResponse('Only once')] })
