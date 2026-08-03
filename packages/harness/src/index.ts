@@ -5,6 +5,7 @@ export {
   toAgentEvent,
   type AgentEvent,
   type RunStatus,
+  type SessionListing,
   type SessionNotification,
   type SessionSnapshot
 } from './events.ts'
