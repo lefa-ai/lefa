@@ -7,7 +7,7 @@ import type {
   AgentEvent,
   SessionNotification,
   SessionSnapshot,
-  SessionSummary
+  SessionListing
 } from '../../shared/api'
 import App from './App'
 
@@ -49,7 +49,7 @@ const setSessionModel = vi.fn<(input: { sessionId: string; model: string }) => P
 const listModels = vi.fn<() => Promise<readonly { id: string; name: string }[]>>()
 const promptSession = vi.fn<(input: { sessionId: string; prompt: string }) => Promise<void>>()
 const abortSession = vi.fn<(sessionId: string) => Promise<void>>()
-const listSessions = vi.fn<() => Promise<readonly SessionSummary[]>>()
+const listSessions = vi.fn<() => Promise<readonly SessionListing[]>>()
 const attachSession = vi.fn<(sessionId: string) => Promise<SessionSnapshot>>()
 const deleteSession = vi.fn<(sessionId: string) => Promise<void>>()
 const unsubscribe = vi.fn()
@@ -372,7 +372,8 @@ describe('App', () => {
         cwd: '/tmp/other-repo',
         createdAt: '2026-08-01T10:00:00.000Z',
         updatedAt: new Date().toISOString(),
-        title: 'Earlier task'
+        title: 'Earlier task',
+        status: 'idle'
       }
     ])
     attachSession.mockResolvedValue({
@@ -404,7 +405,8 @@ describe('App', () => {
         cwd: '/tmp/busy',
         createdAt: '2026-08-01T10:00:00.000Z',
         updatedAt: new Date().toISOString(),
-        title: 'Still going'
+        title: 'Still going',
+        status: 'idle'
       }
     ])
     attachSession.mockResolvedValue({
@@ -440,7 +442,8 @@ describe('App', () => {
         cwd: '/tmp/busy',
         createdAt: '2026-08-01T10:00:00.000Z',
         updatedAt: new Date().toISOString(),
-        title: 'Mid-sentence'
+        title: 'Mid-sentence',
+        status: 'idle'
       }
     ])
     const attaching = deferred<SessionSnapshot>()
@@ -480,7 +483,8 @@ describe('App', () => {
         cwd: '/tmp/other',
         createdAt: '2026-08-01T10:00:00.000Z',
         updatedAt: new Date().toISOString(),
-        title: 'Elsewhere'
+        title: 'Elsewhere',
+        status: 'idle'
       }
     ])
     attachSession.mockResolvedValue(snapshot({ id: 'session-7', cwd: '/tmp/other' }))
@@ -490,6 +494,43 @@ describe('App', () => {
     await screen.findByText('/tmp/other')
 
     expect(listeners).toHaveLength(1)
+  })
+
+  it('shows a session working while you are looking at another one', async () => {
+    listSessions.mockResolvedValue([
+      {
+        id: 'session-9',
+        cwd: '/tmp/elsewhere',
+        createdAt: '2026-08-01T10:00:00.000Z',
+        updatedAt: new Date().toISOString(),
+        title: 'Off on its own',
+        status: 'idle'
+      }
+    ])
+    await openWorkspace()
+    await screen.findByText('Off on its own')
+
+    expect(screen.queryByRole('status', { name: 'Working' })).toBeNull()
+
+    // Nothing about this session is on screen, but the sidebar still says so.
+    notify({ type: 'status', sessionId: 'session-9', status: 'running' })
+
+    expect(screen.getByRole('status', { name: 'Working' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Run' })).toBeTruthy()
+
+    listSessions.mockResolvedValue([
+      {
+        id: 'session-9',
+        cwd: '/tmp/elsewhere',
+        createdAt: '2026-08-01T10:00:00.000Z',
+        updatedAt: new Date().toISOString(),
+        title: 'Off on its own',
+        status: 'idle'
+      }
+    ])
+    finished('session-9')
+
+    await waitFor(() => expect(screen.queryByRole('status', { name: 'Working' })).toBeNull())
   })
 
   it('refreshes the session list when a run finishes', async () => {
@@ -509,7 +550,8 @@ describe('App', () => {
         cwd: '/tmp/workspace',
         createdAt: '2026-08-01T10:00:00.000Z',
         updatedAt: new Date().toISOString(),
-        title: 'Current task'
+        title: 'Current task',
+        status: 'idle'
       }
     ])
     const user = await openWorkspace()
@@ -528,7 +570,8 @@ describe('App', () => {
         cwd: '/tmp/other',
         createdAt: '2026-08-01T10:00:00.000Z',
         updatedAt: new Date().toISOString(),
-        title: 'Broken'
+        title: 'Broken',
+        status: 'idle'
       }
     ])
     attachSession.mockRejectedValue(new Error('gone'))
