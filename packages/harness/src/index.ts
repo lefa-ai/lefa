@@ -5,6 +5,13 @@ export { toAgentEvent, type AgentEvent } from './events.ts'
 export { createReadTool, type ReadInput, type ReadOutput, type ReadTool } from './read.ts'
 export { toAgentEvents } from './replay.ts'
 export {
+  SessionManager,
+  type RunStatus,
+  type SessionManagerOptions,
+  type SessionNotification,
+  type SessionSnapshot
+} from './session-manager.ts'
+export {
   SessionStore,
   type SessionMeta,
   type SessionRecord,
