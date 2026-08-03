@@ -2,14 +2,14 @@ import { SquareIcon } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState, type FormEvent, type KeyboardEvent } from 'react'
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
-import type { RunStatus, SessionSnapshot, SessionSummary } from '../../shared/api'
+import type { RunStatus, SessionListing, SessionSnapshot } from '../../shared/api'
 import { Conversation } from './components/conversation'
 import { ModelPicker } from './components/model-picker'
 import { SessionList } from './components/session-list'
 import { buildTranscript, reduceTranscript, type TranscriptItem } from './transcript'
 
 function App(): React.JSX.Element {
-  const [sessions, setSessions] = useState<readonly SessionSummary[]>([])
+  const [sessions, setSessions] = useState<readonly SessionListing[]>([])
   const [workspacePath, setWorkspacePath] = useState<string | null>(null)
   const [sessionId, setSessionId] = useState<string | null>(null)
   const [model, setModel] = useState<string | null>(null)
@@ -59,17 +59,27 @@ function App(): React.JSX.Element {
   useEffect(
     () =>
       window.lefa.session.onNotify((notification) => {
-        // Ignore a session that is no longer on screen while its run continues.
-        // Attaching to it again brings back everything missed in the meantime.
-        if (notification.sessionId !== watching.current) return
-
+        // Run state is followed for every session, so the sidebar can show work
+        // happening somewhere other than on screen.
         if (notification.type === 'status') {
-          setStatus(notification.status)
-          // A finished turn is a turn worth listing.
+          setSessions((current) =>
+            current.map((session) =>
+              session.id === notification.sessionId
+                ? { ...session, status: notification.status }
+                : session
+            )
+          )
+
+          if (notification.sessionId === watching.current) setStatus(notification.status)
+          // A finished turn is a turn worth listing, whoever ran it.
           if (notification.status === 'idle') void refreshSessions()
 
           return
         }
+
+        // A transcript, though, is only drawn for the session on screen.
+        // Attaching to any other brings back everything missed in the meantime.
+        if (notification.sessionId !== watching.current) return
 
         if (notification.event.type === 'error') setError(notification.event.message)
         else setItems((current) => reduceTranscript(current, notification.event))
