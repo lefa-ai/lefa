@@ -30,6 +30,19 @@ export interface SessionSnapshot {
   events: readonly AgentEvent[]
 }
 
+/**
+ * A saved session as a list of them shows it: what is on disk, plus what it is
+ * doing right now. Only the manager can answer the second half.
+ */
+export interface SessionListing {
+  id: string
+  cwd: string
+  createdAt: string
+  updatedAt: string
+  title: string
+  status: RunStatus
+}
+
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
 }
