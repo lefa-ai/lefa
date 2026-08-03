@@ -3,10 +3,21 @@ import { Button } from '@/components/ui/button'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { relativeTime } from '@/lib/time'
 import { cn } from '@/lib/utils'
-import type { SessionSummary } from '../../../shared/api'
+import type { SessionListing } from '../../../shared/api'
 
 function workspaceName(cwd: string): string {
   return cwd.split('/').filter(Boolean).at(-1) ?? cwd
+}
+
+/** Lime, breathing: the one thing in the list that is happening right now. */
+function Working(): React.JSX.Element {
+  return (
+    <span
+      role="status"
+      aria-label="Working"
+      className="size-1.5 shrink-0 animate-pulse rounded-full bg-primary"
+    />
+  )
 }
 
 export function SessionList({
@@ -17,7 +28,7 @@ export function SessionList({
   onSelect,
   onDelete
 }: {
-  sessions: readonly SessionSummary[]
+  sessions: readonly SessionListing[]
   activeId: string | null
   isCreating: boolean
   onCreate: () => void
@@ -59,8 +70,11 @@ export function SessionList({
                     session.id === activeId && 'bg-secondary'
                   )}
                 >
-                  <span className="block truncate text-xs font-medium">
-                    {session.title || 'Untitled'}
+                  <span className="flex items-center gap-1.5">
+                    <span className="min-w-0 flex-1 truncate text-xs font-medium">
+                      {session.title || 'Untitled'}
+                    </span>
+                    {session.status === 'running' && <Working />}
                   </span>
                   <span className="mt-0.5 flex items-center gap-1.5 font-mono text-[10.5px] text-faint">
                     <span className="truncate">{workspaceName(session.cwd)}</span>
