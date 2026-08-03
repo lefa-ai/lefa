@@ -5,7 +5,8 @@ import { join } from 'node:path'
 import { describe, it } from 'node:test'
 import { customProvider, type ModelMessage } from 'ai'
 import { convertArrayToReadableStream, MockLanguageModelV3 } from 'ai/test'
-import { SessionManager, type SessionNotification } from './session-manager.ts'
+import type { SessionNotification } from './events.ts'
+import { SessionManager } from './session-manager.ts'
 import { SessionStore } from './session-store.ts'
 
 const usage = {
