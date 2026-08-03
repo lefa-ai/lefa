@@ -1,27 +1,26 @@
-import type { AgentEvent } from '@lefa/harness/events'
+import type {
+  AgentEvent,
+  RunStatus,
+  SessionNotification,
+  SessionSnapshot
+} from '@lefa/harness/events'
 
 export const sessionOpenChannel = 'session:open'
 export const sessionPromptChannel = 'session:prompt'
 export const sessionAbortChannel = 'session:abort'
-export const sessionEventChannel = 'session:event'
+export const sessionNotifyChannel = 'session:notify'
 export const sessionListChannel = 'session:list'
-export const sessionResumeChannel = 'session:resume'
+export const sessionAttachChannel = 'session:attach'
 export const sessionDeleteChannel = 'session:delete'
 export const sessionSetModelChannel = 'session:set-model'
 export const modelListChannel = 'models:list'
 export const workspaceChannel = 'workspace:select-directory'
 
-export type { AgentEvent }
+export type { AgentEvent, RunStatus, SessionNotification, SessionSnapshot }
 
 export interface SessionPromptInput {
   sessionId: string
   prompt: string
-}
-
-/** An agent event tagged with its session, so stale runs can be ignored. */
-export interface SessionEvent {
-  sessionId: string
-  event: AgentEvent
 }
 
 export interface SessionSummary {
@@ -43,30 +42,16 @@ export interface SetModelInput {
   model: string
 }
 
-/** A session restored from disk, as the events that originally produced it. */
-export interface RestoredSession {
-  id: string
-  cwd: string
-  model: string
-  events: readonly AgentEvent[]
-}
-
-/** A newly opened session, along with the model it starts on. */
-export interface OpenedSession {
-  id: string
-  model: string
-}
-
 export interface LefaApi {
   session: {
-    open: (cwd: string) => Promise<OpenedSession>
+    open: (cwd: string) => Promise<SessionSnapshot>
     prompt: (input: SessionPromptInput) => Promise<void>
     abort: (sessionId: string) => Promise<void>
     list: () => Promise<readonly SessionSummary[]>
-    resume: (sessionId: string) => Promise<RestoredSession>
+    attach: (sessionId: string) => Promise<SessionSnapshot>
     delete: (sessionId: string) => Promise<void>
     setModel: (input: SetModelInput) => Promise<void>
-    onEvent: (listener: (event: SessionEvent) => void) => () => void
+    onNotify: (listener: (notification: SessionNotification) => void) => () => void
   }
   models: {
     list: () => Promise<readonly ModelSummary[]>
