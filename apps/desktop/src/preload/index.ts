@@ -2,21 +2,20 @@ import { contextBridge, ipcRenderer } from 'electron'
 import {
   modelListChannel,
   sessionAbortChannel,
+  sessionAttachChannel,
   sessionDeleteChannel,
-  sessionEventChannel,
   sessionListChannel,
+  sessionNotifyChannel,
   sessionOpenChannel,
   sessionPromptChannel,
-  sessionResumeChannel,
   sessionSetModelChannel,
   workspaceChannel,
   type LefaApi,
   type ModelSummary,
-  type OpenedSession,
-  type RestoredSession,
-  type SessionEvent,
+  type SessionNotification,
   type SessionPromptInput,
-  type SessionSummary,
+  type SessionSnapshot,
+  type SessionListing,
   type SetModelInput
 } from '../shared/api'
 
@@ -39,19 +38,20 @@ async function invoke<T>(channel: string, ...args: unknown[]): Promise<T> {
 
 const api = {
   session: {
-    open: (cwd: string) => invoke<OpenedSession>(sessionOpenChannel, cwd),
+    open: (cwd: string) => invoke<SessionSnapshot>(sessionOpenChannel, cwd),
     prompt: (input: SessionPromptInput) => invoke<void>(sessionPromptChannel, input),
     abort: (sessionId: string) => invoke<void>(sessionAbortChannel, sessionId),
-    list: () => invoke<readonly SessionSummary[]>(sessionListChannel),
-    resume: (sessionId: string) => invoke<RestoredSession>(sessionResumeChannel, sessionId),
+    list: () => invoke<readonly SessionListing[]>(sessionListChannel),
+    attach: (sessionId: string) => invoke<SessionSnapshot>(sessionAttachChannel, sessionId),
     delete: (sessionId: string) => invoke<void>(sessionDeleteChannel, sessionId),
     setModel: (input: SetModelInput) => invoke<void>(sessionSetModelChannel, input),
-    onEvent: (listener: (event: SessionEvent) => void) => {
-      const handler = (_event: unknown, sessionEvent: SessionEvent): void => listener(sessionEvent)
-      ipcRenderer.on(sessionEventChannel, handler)
+    onNotify: (listener: (notification: SessionNotification) => void) => {
+      const handler = (_event: unknown, notification: SessionNotification): void =>
+        listener(notification)
+      ipcRenderer.on(sessionNotifyChannel, handler)
 
       return () => {
-        ipcRenderer.off(sessionEventChannel, handler)
+        ipcRenderer.off(sessionNotifyChannel, handler)
       }
     }
   },

@@ -3,60 +3,75 @@ import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const mocks = vi.hoisted(() => ({
-  Session: vi.fn(),
+  SessionManager: vi.fn(),
   SessionStore: vi.fn(),
   existsSync: vi.fn()
 }))
 
-vi.mock('@lefa/harness', () => ({ Session: mocks.Session, SessionStore: mocks.SessionStore }))
+vi.mock('@lefa/harness', () => ({
+  SessionManager: mocks.SessionManager,
+  SessionStore: mocks.SessionStore
+}))
 vi.mock('node:fs', () => ({ existsSync: mocks.existsSync }))
+vi.mock('@ai-sdk/gateway', () => ({
+  GatewayAuthenticationError: { isInstance: (error: unknown) => (error as Error)?.name === 'Auth' }
+}))
+
+/** The wording the manager will use for a run that failed. */
+function describeError(): (error: unknown) => string {
+  const options = mocks.SessionManager.mock.calls[0]?.[0] as {
+    describeError: (error: unknown) => string
+  }
+
+  return options.describeError
+}
 
 beforeEach(() => {
   vi.resetModules()
   vi.clearAllMocks()
+  mocks.existsSync.mockReturnValue(false)
+  vi.spyOn(process, 'loadEnvFile').mockImplementation(() => {})
 })
 
 afterEach(() => {
   vi.restoreAllMocks()
 })
 
-describe('workspace session', () => {
-  it('passes the chosen model and workspace straight to the harness', async () => {
-    mocks.existsSync.mockReturnValue(false)
-    const loadEnvFile = vi.spyOn(process, 'loadEnvFile').mockImplementation(() => {})
+describe('session ownership', () => {
+  it('keeps every session and run behind one manager over a plain home directory', async () => {
+    const { sessionManager, lefaHome, DEFAULT_MODEL } = await import('./agent')
 
-    const { createWorkspaceSession, sessionStore, DEFAULT_MODEL } = await import('./agent')
-    const session = createWorkspaceSession('/tmp/workspace', 'openai/gpt-5.1-codex')
-
-    expect(session).toBeInstanceOf(mocks.Session)
     expect(DEFAULT_MODEL).toBe('anthropic/claude-haiku-4.5')
-    expect(mocks.Session).toHaveBeenCalledWith('openai/gpt-5.1-codex', '/tmp/workspace', {
-      store: sessionStore
-    })
+    expect(lefaHome).toBe(join(homedir(), '.lefa'))
     expect(mocks.SessionStore).toHaveBeenCalledWith(join(homedir(), '.lefa', 'sessions'))
-    expect(loadEnvFile).not.toHaveBeenCalled()
-  })
-
-  it('keeps caller options while forcing the shared store', async () => {
-    mocks.existsSync.mockReturnValue(false)
-    vi.spyOn(process, 'loadEnvFile').mockImplementation(() => {})
-
-    const { createWorkspaceSession, sessionStore } = await import('./agent')
-    createWorkspaceSession('/tmp/workspace', 'anthropic/claude-opus-5', { title: 'Earlier work' })
-
-    expect(mocks.Session).toHaveBeenCalledWith('anthropic/claude-opus-5', '/tmp/workspace', {
-      title: 'Earlier work',
-      store: sessionStore
+    expect(sessionManager).toBeInstanceOf(mocks.SessionManager)
+    expect(mocks.SessionManager).toHaveBeenCalledWith({
+      store: mocks.SessionStore.mock.instances[0],
+      describeError: expect.any(Function)
     })
   })
 
   it('loads a local .env file when one exists', async () => {
     mocks.existsSync.mockReturnValue(true)
-    const loadEnvFile = vi.spyOn(process, 'loadEnvFile').mockImplementation(() => {})
 
     await import('./agent')
 
     expect(mocks.existsSync).toHaveBeenCalledWith('.env')
-    expect(loadEnvFile).toHaveBeenCalledOnce()
+    expect(process.loadEnvFile).toHaveBeenCalledOnce()
+  })
+
+  it('turns a missing gateway key into an actionable message', async () => {
+    await import('./agent')
+
+    expect(describeError()(Object.assign(new Error('unauthorized'), { name: 'Auth' }))).toBe(
+      'No AI Gateway key. Set AI_GATEWAY_API_KEY in apps/desktop/.env.'
+    )
+  })
+
+  it('passes any other failure through in the provider’s own words', async () => {
+    await import('./agent')
+
+    expect(describeError()(new Error('model is overloaded'))).toBe('model is overloaded')
+    expect(describeError()('just a string')).toBe('just a string')
   })
 })

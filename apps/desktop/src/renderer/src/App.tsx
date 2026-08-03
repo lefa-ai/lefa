@@ -1,23 +1,33 @@
 import { SquareIcon } from 'lucide-react'
-import { useCallback, useEffect, useState, type FormEvent, type KeyboardEvent } from 'react'
+import { useCallback, useEffect, useRef, useState, type FormEvent, type KeyboardEvent } from 'react'
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
-import type { SessionSummary } from '../../shared/api'
+import type { RunStatus, SessionListing, SessionSnapshot } from '../../shared/api'
 import { Conversation } from './components/conversation'
 import { ModelPicker } from './components/model-picker'
 import { SessionList } from './components/session-list'
 import { buildTranscript, reduceTranscript, type TranscriptItem } from './transcript'
 
 function App(): React.JSX.Element {
-  const [sessions, setSessions] = useState<readonly SessionSummary[]>([])
+  const [sessions, setSessions] = useState<readonly SessionListing[]>([])
   const [workspacePath, setWorkspacePath] = useState<string | null>(null)
   const [sessionId, setSessionId] = useState<string | null>(null)
   const [model, setModel] = useState<string | null>(null)
   const [prompt, setPrompt] = useState('')
   const [items, setItems] = useState<readonly TranscriptItem[]>([])
   const [isSelecting, setIsSelecting] = useState(false)
-  const [isRunning, setIsRunning] = useState(false)
+  const [queued, setQueued] = useState<readonly string[]>([])
+  const [status, setStatus] = useState<RunStatus>('idle')
   const [error, setError] = useState<string | null>(null)
+  const isRunning = status === 'running'
+  /**
+   * The session on screen, as of right now rather than as of the last render.
+   *
+   * A run keeps streaming through the frame it takes React to redraw a switch,
+   * and state read from a listener would still name the session we just left —
+   * so every one of those events would be dropped mid-sentence.
+   */
+  const watching = useRef<string | null>(null)
 
   const refreshSessions = useCallback(async (): Promise<void> => {
     try {
@@ -45,17 +55,55 @@ function App(): React.JSX.Element {
     }
   }, [])
 
+  // Subscribed once for the life of the window: what changes is which session
+  // the notifications are about, and that is what the ref is for.
   useEffect(
     () =>
-      window.lefa.session.onEvent(({ sessionId: eventSessionId, event }) => {
-        // Ignore a session that is no longer on screen while its run drains.
-        if (eventSessionId !== sessionId) return
+      window.lefa.session.onNotify((notification) => {
+        // Run state is followed for every session, so the sidebar can show work
+        // happening somewhere other than on screen.
+        if (notification.type === 'status') {
+          setSessions((current) =>
+            current.map((session) =>
+              session.id === notification.sessionId
+                ? { ...session, status: notification.status }
+                : session
+            )
+          )
 
-        if (event.type === 'error') setError(event.message)
-        else setItems((current) => reduceTranscript(current, event))
+          if (notification.sessionId === watching.current) setStatus(notification.status)
+          // A finished turn is a turn worth listing, whoever ran it.
+          if (notification.status === 'idle') void refreshSessions()
+
+          return
+        }
+
+        if (notification.type === 'queued') {
+          if (notification.sessionId === watching.current) setQueued(notification.prompts)
+
+          return
+        }
+
+        // A transcript, though, is only drawn for the session on screen.
+        // Attaching to any other brings back everything missed in the meantime.
+        if (notification.sessionId !== watching.current) return
+
+        if (notification.event.type === 'error') setError(notification.event.message)
+        else setItems((current) => reduceTranscript(current, notification.event))
       }),
-    [sessionId]
+    [refreshSessions]
   )
+
+  const showSession = (snapshot: SessionSnapshot): void => {
+    // The ref moves first: the next event may arrive before React redraws.
+    watching.current = snapshot.id
+    setSessionId(snapshot.id)
+    setModel(snapshot.model)
+    setWorkspacePath(snapshot.cwd)
+    setItems(buildTranscript(snapshot.events))
+    setQueued(snapshot.queued)
+    setStatus(snapshot.status)
+  }
 
   const createSession = async (): Promise<void> => {
     setIsSelecting(true)
@@ -64,14 +112,7 @@ function App(): React.JSX.Element {
     try {
       const path = await window.lefa.workspace.selectDirectory()
 
-      if (path) {
-        const opened = await window.lefa.session.open(path)
-
-        setSessionId(opened.id)
-        setModel(opened.model)
-        setWorkspacePath(path)
-        setItems([])
-      }
+      if (path) showSession(await window.lefa.session.open(path))
     } catch {
       setError('Unable to open the folder picker.')
     } finally {
@@ -84,12 +125,7 @@ function App(): React.JSX.Element {
     setError(null)
 
     try {
-      const restored = await window.lefa.session.resume(id)
-
-      setSessionId(restored.id)
-      setModel(restored.model)
-      setWorkspacePath(restored.cwd)
-      setItems(buildTranscript(restored.events))
+      showSession(await window.lefa.session.attach(id))
     } catch {
       setError('Unable to open that session.')
     }
@@ -102,10 +138,13 @@ function App(): React.JSX.Element {
       await window.lefa.session.delete(id)
 
       if (id === sessionId) {
+        watching.current = null
         setSessionId(null)
         setModel(null)
         setWorkspacePath(null)
         setItems([])
+        setQueued([])
+        setStatus('idle')
       }
 
       await refreshSessions()
@@ -118,14 +157,15 @@ function App(): React.JSX.Element {
     event.preventDefault()
 
     const text = prompt.trim()
-    if (!sessionId || !text || isRunning) return
+    // Sending into a turn already running queues it, so there is no reason to
+    // make anyone wait for a stopping place before typing.
+    if (!sessionId || !text) return
 
-    setIsRunning(true)
-    setItems((current) => reduceTranscript(current, { type: 'prompt', text }))
     setPrompt('')
     setError(null)
 
     try {
+      // The prompt itself comes back as an event, so every watcher sees it.
       await window.lefa.session.prompt({ sessionId, prompt: text })
     } catch (failure) {
       // Provider failures carry the only useful detail — a missing key, an
@@ -133,9 +173,6 @@ function App(): React.JSX.Element {
       const message = failure instanceof Error ? failure.message.trim() : ''
 
       setError(message || 'Unable to run the agent.')
-    } finally {
-      setIsRunning(false)
-      await refreshSessions()
     }
   }
 
@@ -193,7 +230,7 @@ function App(): React.JSX.Element {
         {sessionId ? (
           <>
             <div className="min-h-0 flex-1">
-              <Conversation items={items} isRunning={isRunning} />
+              <Conversation items={items} queued={queued} isRunning={isRunning} />
             </div>
 
             <div className="shrink-0 px-6 pb-6">
@@ -201,7 +238,11 @@ function App(): React.JSX.Element {
                 <div className="rounded-xl border border-border bg-card p-2 focus-within:border-ring">
                   <Textarea
                     aria-label="Prompt"
-                    placeholder="Ask Lefa to work in this folder"
+                    placeholder={
+                      isRunning
+                        ? 'Send a follow-up — it runs after this turn'
+                        : 'Ask Lefa to work in this folder'
+                    }
                     value={prompt}
                     rows={2}
                     onChange={(event) => setPrompt(event.target.value)}
@@ -210,16 +251,17 @@ function App(): React.JSX.Element {
                   />
                   <div className="flex items-center justify-between gap-2 px-1 pb-1">
                     {model && <ModelPicker model={model} onChange={changeModel} />}
-                    {isRunning ? (
-                      <Button type="button" size="sm" variant="secondary" onClick={stopAgent}>
-                        <SquareIcon />
-                        Stop
-                      </Button>
-                    ) : (
+                    <div className="flex items-center gap-2">
+                      {isRunning && (
+                        <Button type="button" size="sm" variant="secondary" onClick={stopAgent}>
+                          <SquareIcon />
+                          Stop
+                        </Button>
+                      )}
                       <Button type="submit" size="sm" disabled={!prompt.trim()}>
-                        Run
+                        {isRunning ? 'Queue' : 'Run'}
                       </Button>
-                    )}
+                    </div>
                   </div>
                 </div>
               </form>

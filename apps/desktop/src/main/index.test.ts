@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import type { SessionNotification } from '../shared/api'
 
 type Handler = (...args: unknown[]) => unknown
 
@@ -12,7 +13,6 @@ const electron = vi.hoisted(() => {
     loadURL: ReturnType<typeof vi.fn>
     loadFile: ReturnType<typeof vi.fn>
     setWindowOpenHandler: ReturnType<typeof vi.fn>
-    sender: object
   }> = []
 
   function createWindow(options: unknown) {
@@ -23,8 +23,7 @@ const electron = vi.hoisted(() => {
       show: vi.fn(),
       loadURL: vi.fn().mockResolvedValue(undefined),
       loadFile: vi.fn().mockResolvedValue(undefined),
-      setWindowOpenHandler: vi.fn(),
-      sender: {}
+      setWindowOpenHandler: vi.fn()
     }
     windows.push(window)
     return window
@@ -37,9 +36,7 @@ const electron = vi.hoisted(() => {
       once: vi.fn((event: string, handler: Handler) => readyHandler(window, event, handler)),
       loadURL: window.loadURL,
       loadFile: window.loadFile,
-      webContents: {
-        setWindowOpenHandler: window.setWindowOpenHandler
-      }
+      webContents: { setWindowOpenHandler: window.setWindowOpenHandler }
     }
   })
 
@@ -90,17 +87,18 @@ const electron = vi.hoisted(() => {
   }
 })
 
-const agent = vi.hoisted(() => ({
-  createWorkspaceSession: vi.fn(),
+const manager = vi.hoisted(() => ({
+  open: vi.fn(),
+  attach: vi.fn(),
   prompt: vi.fn(),
   abort: vi.fn(),
-  discard: vi.fn(),
-  history: [] as unknown[],
   setModel: vi.fn(),
-  model: 'anthropic/claude-haiku-4.5',
-  store: { list: vi.fn(), load: vi.fn(), delete: vi.fn() }
+  delete: vi.fn(),
+  list: vi.fn(),
+  subscribe: vi.fn(),
+  /** The broadcaster main handed to the manager at startup. */
+  watcher: undefined as ((notification: SessionNotification) => void) | undefined
 }))
-const harness = vi.hoisted(() => ({ toAgentEvents: vi.fn() }))
 const support = vi.hoisted(() => ({
   listModels: vi.fn(),
   readDefaultModel: vi.fn(),
@@ -115,8 +113,7 @@ vi.mock('electron', () => ({
   ipcMain: electron.ipcMain
 }))
 vi.mock('./agent', () => ({
-  createWorkspaceSession: agent.createWorkspaceSession,
-  sessionStore: agent.store,
+  sessionManager: manager,
   lefaHome: '/tmp/lefa',
   DEFAULT_MODEL: 'anthropic/claude-haiku-4.5'
 }))
@@ -125,51 +122,40 @@ vi.mock('./settings', () => ({
   readDefaultModel: support.readDefaultModel,
   writeDefaultModel: support.writeDefaultModel
 }))
-vi.mock('@lefa/harness', () => ({ toAgentEvents: harness.toAgentEvents }))
-vi.mock('@ai-sdk/gateway', () => ({
-  GatewayAuthenticationError: { isInstance: (error: unknown) => (error as Error)?.name === 'Auth' }
-}))
 
-function sender(overrides: { destroyed?: boolean } = {}): {
-  send: ReturnType<typeof vi.fn>
-  isDestroyed: () => boolean
-} {
-  return { send: vi.fn(), isDestroyed: () => overrides.destroyed ?? false }
+const snapshot = {
+  id: 'session-1',
+  cwd: '/tmp/workspace',
+  model: 'anthropic/claude-haiku-4.5',
+  status: 'idle' as const,
+  events: []
 }
 
-async function openSession(id = 'session-1'): Promise<string> {
-  agent.createWorkspaceSession.mockReturnValue({
-    id,
-    cwd: '/tmp/workspace',
-    history: agent.history,
-    model: agent.model,
-    prompt: agent.prompt,
-    abort: agent.abort,
-    discard: agent.discard,
-    setModel: agent.setModel
-  })
-  const openHandler = electron.ipcHandlers.get('session:open')
-  const opened = (await openHandler?.({ sender: sender() }, '/tmp/workspace')) as { id: string }
-
-  return opened.id
+/** Electron settles a handler's result — and its throw — as a promise. */
+async function invoke(channel: string, ...args: unknown[]): Promise<unknown> {
+  return electron.ipcHandlers.get(channel)?.({ sender: {} }, ...args)
 }
 
 async function loadMain(options: { packaged?: boolean; rendererUrl?: string } = {}): Promise<void> {
   vi.resetModules()
   electron.reset()
-  agent.createWorkspaceSession.mockReset()
-  agent.prompt.mockReset()
-  agent.abort.mockReset()
-  agent.discard.mockReset()
-  agent.store.list.mockReset()
-  agent.store.load.mockReset()
-  agent.store.delete.mockReset()
-  agent.store.delete.mockResolvedValue(undefined)
-  harness.toAgentEvents.mockReset()
-  harness.toAgentEvents.mockReturnValue([])
-  agent.setModel.mockReset()
-  agent.setModel.mockResolvedValue(undefined)
-  agent.model = 'anthropic/claude-haiku-4.5'
+  manager.open.mockReset()
+  manager.open.mockReturnValue(snapshot)
+  manager.attach.mockReset()
+  manager.attach.mockResolvedValue(snapshot)
+  manager.prompt.mockReset()
+  manager.abort.mockReset()
+  manager.setModel.mockReset()
+  manager.delete.mockReset()
+  manager.delete.mockResolvedValue(undefined)
+  manager.list.mockReset()
+  manager.list.mockResolvedValue([])
+  manager.subscribe.mockReset()
+  manager.watcher = undefined
+  manager.subscribe.mockImplementation((watcher: (notification: SessionNotification) => void) => {
+    manager.watcher = watcher
+    return () => {}
+  })
   support.listModels.mockReset()
   support.listModels.mockResolvedValue([])
   support.readDefaultModel.mockReset()
@@ -206,7 +192,7 @@ describe('desktop main process', () => {
     expect(electron.ipcHandlers.has('session:prompt')).toBe(true)
     expect(electron.ipcHandlers.has('session:abort')).toBe(true)
     expect(electron.ipcHandlers.has('session:list')).toBe(true)
-    expect(electron.ipcHandlers.has('session:resume')).toBe(true)
+    expect(electron.ipcHandlers.has('session:attach')).toBe(true)
     expect(electron.ipcHandlers.has('session:delete')).toBe(true)
     expect(electron.ipcHandlers.has('session:set-model')).toBe(true)
     expect(electron.ipcHandlers.has('models:list')).toBe(true)
@@ -234,96 +220,68 @@ describe('desktop main process', () => {
     expect(openHandler()).toEqual({ action: 'deny' })
   })
 
-  it('opens a session per workspace and streams its events to the requesting window', async () => {
+  it('opens a session per workspace on the remembered model', async () => {
     await loadMain()
-    const sessionId = await openSession()
-    agent.prompt.mockReturnValue(
-      (async function* () {
-        yield { type: 'text', text: 'Hello' }
-        yield {
-          type: 'tool-call',
-          toolCallId: 'call-1',
-          toolName: 'bash',
-          input: { command: 'ls' }
-        }
-      })()
-    )
-    const target = sender()
-    const promptHandler = electron.ipcHandlers.get('session:prompt')
+    support.readDefaultModel.mockResolvedValue('openai/gpt-5.1-codex')
 
-    expect(sessionId).toBe('session-1')
-    expect(agent.createWorkspaceSession).toHaveBeenCalledWith(
-      '/tmp/workspace',
-      'anthropic/claude-haiku-4.5'
-    )
+    await expect(invoke('session:open', '/tmp/workspace')).resolves.toEqual(snapshot)
+    expect(manager.open).toHaveBeenCalledWith('/tmp/workspace', 'openai/gpt-5.1-codex')
+  })
+
+  it('starts a run without waiting for it to finish', async () => {
+    await loadMain()
 
     await expect(
-      promptHandler?.({ sender: target }, { sessionId, prompt: 'Help me' })
+      invoke('session:prompt', { sessionId: 'session-1', prompt: 'Help me' })
     ).resolves.toBeUndefined()
-    expect(agent.prompt).toHaveBeenCalledWith('Help me')
-    expect(target.send.mock.calls).toEqual([
-      ['session:event', { sessionId, event: { type: 'text', text: 'Hello' } }],
-      [
-        'session:event',
-        {
-          sessionId,
-          event: {
-            type: 'tool-call',
-            toolCallId: 'call-1',
-            toolName: 'bash',
-            input: { command: 'ls' }
-          }
-        }
-      ]
-    ])
+    expect(manager.prompt).toHaveBeenCalledWith('session-1', 'Help me')
   })
 
-  it('drops events once the requesting window is gone', async () => {
+  it('passes a refused run back to the window that asked for it', async () => {
     await loadMain()
-    const sessionId = await openSession()
-    agent.prompt.mockReturnValue(
-      (async function* () {
-        yield { type: 'text', text: 'Hello' }
-      })()
-    )
-    const target = sender({ destroyed: true })
-
-    await electron.ipcHandlers.get('session:prompt')?.(
-      { sender: target },
-      { sessionId, prompt: 'Help me' }
-    )
-
-    expect(target.send).not.toHaveBeenCalled()
-  })
-
-  it('rejects a prompt for a session that is not open', async () => {
-    await loadMain()
-    const promptHandler = electron.ipcHandlers.get('session:prompt')
+    manager.prompt.mockImplementation(() => {
+      throw new Error('That session is no longer open.')
+    })
 
     await expect(
-      promptHandler?.({ sender: sender() }, { sessionId: 'missing', prompt: 'Help me' })
+      invoke('session:prompt', { sessionId: 'missing', prompt: 'Help me' })
     ).rejects.toThrow('That session is no longer open.')
-    expect(agent.prompt).not.toHaveBeenCalled()
   })
 
-  it('interrupts the addressed session and ignores unknown ones', async () => {
+  it('tells every live window about a run, and none of the dead ones', async () => {
     await loadMain()
-    const sessionId = await openSession()
-    const abortHandler = electron.ipcHandlers.get('session:abort')
+    const live = { webContents: { send: vi.fn(), isDestroyed: () => false } }
+    const alsoLive = { webContents: { send: vi.fn(), isDestroyed: () => false } }
+    const gone = { webContents: { send: vi.fn(), isDestroyed: () => true } }
+    electron.getAllWindows.mockReturnValue([live, gone, alsoLive])
+    const notification: SessionNotification = {
+      type: 'status',
+      sessionId: 'session-1',
+      status: 'running'
+    }
 
-    expect(abortHandler?.({ sender: sender() }, 'missing')).toBeUndefined()
-    expect(agent.abort).not.toHaveBeenCalled()
+    expect(manager.subscribe).toHaveBeenCalledOnce()
+    manager.watcher?.(notification)
 
-    abortHandler?.({ sender: sender() }, sessionId)
-    expect(agent.abort).toHaveBeenCalledOnce()
+    // A run is nobody's private business: it reaches every window that is still
+    // there, whichever one happened to start it.
+    expect(live.webContents.send).toHaveBeenCalledWith('session:notify', notification)
+    expect(alsoLive.webContents.send).toHaveBeenCalledWith('session:notify', notification)
+    expect(gone.webContents.send).not.toHaveBeenCalled()
+  })
+
+  it('interrupts the addressed session', async () => {
+    await loadMain()
+
+    await expect(invoke('session:abort', 'session-1')).resolves.toBeUndefined()
+    expect(manager.abort).toHaveBeenCalledWith('session-1')
   })
 
   it('returns null when workspace selection has no owning window', async () => {
     await loadMain()
     electron.fromWebContents.mockReturnValue(null)
-    const workspaceHandler = electron.ipcHandlers.get('workspace:select-directory')
 
-    await expect(workspaceHandler?.({ sender: {} })).resolves.toBeNull()
+    await expect(invoke('workspace:select-directory')).resolves.toBeNull()
     expect(electron.dialog.showOpenDialog).not.toHaveBeenCalled()
   })
 
@@ -335,149 +293,63 @@ describe('desktop main process', () => {
       .mockResolvedValueOnce({ canceled: true, filePaths: ['/ignored'] })
       .mockResolvedValueOnce({ canceled: false, filePaths: [] })
       .mockResolvedValueOnce({ canceled: false, filePaths: ['/tmp/workspace'] })
-    const workspaceHandler = electron.ipcHandlers.get('workspace:select-directory')
-    const event = { sender: {} }
 
-    await expect(workspaceHandler?.(event)).resolves.toBeNull()
-    await expect(workspaceHandler?.(event)).resolves.toBeNull()
-    await expect(workspaceHandler?.(event)).resolves.toBe('/tmp/workspace')
+    await expect(invoke('workspace:select-directory')).resolves.toBeNull()
+    await expect(invoke('workspace:select-directory')).resolves.toBeNull()
+    await expect(invoke('workspace:select-directory')).resolves.toBe('/tmp/workspace')
     expect(electron.dialog.showOpenDialog).toHaveBeenCalledWith(owner, {
       properties: ['openDirectory']
     })
   })
 
-  it('lists saved sessions from the store', async () => {
+  it('lists saved sessions', async () => {
     await loadMain()
     const summaries = [{ id: 'session-1', cwd: '/tmp/workspace', title: 'A task' }]
-    agent.store.list.mockResolvedValue(summaries)
+    manager.list.mockResolvedValue(summaries)
 
-    await expect(electron.ipcHandlers.get('session:list')?.({ sender: sender() })).resolves.toEqual(
-      summaries
-    )
+    await expect(invoke('session:list')).resolves.toEqual(summaries)
   })
 
-  it('resumes a stored session and replays it as events', async () => {
+  it('attaches to a session and hands back everything needed to draw it', async () => {
     await loadMain()
-    const messages = [{ role: 'user', content: 'Hello' }]
-    const events = [{ type: 'prompt', text: 'Hello' }]
-    agent.store.load.mockResolvedValue({
-      meta: {
-        id: 'session-9',
-        cwd: '/tmp/stored',
-        createdAt: '2026-08-01T10:00:00.000Z',
-        title: 'Stored'
-      },
-      model: 'openai/gpt-5.1-codex',
-      messages
-    })
-    agent.createWorkspaceSession.mockReturnValue({
-      id: 'session-9',
-      cwd: '/tmp/stored',
-      history: messages,
-      prompt: agent.prompt,
-      abort: agent.abort
-    })
-    harness.toAgentEvents.mockReturnValue(events)
-
-    const restored = await electron.ipcHandlers.get('session:resume')?.(
-      { sender: sender() },
-      'session-9'
-    )
-
-    expect(agent.createWorkspaceSession).toHaveBeenCalledWith(
-      '/tmp/stored',
-      'openai/gpt-5.1-codex',
-      {
-        id: 'session-9',
-        createdAt: '2026-08-01T10:00:00.000Z',
-        title: 'Stored',
-        messages
-      }
-    )
-    expect(restored).toEqual({
+    const running = {
       id: 'session-9',
       cwd: '/tmp/stored',
       model: 'openai/gpt-5.1-codex',
-      events
-    })
+      status: 'running' as const,
+      events: [{ type: 'prompt', text: 'Hello' }]
+    }
+    manager.attach.mockResolvedValue(running)
+
+    await expect(invoke('session:attach', 'session-9')).resolves.toEqual(running)
+    expect(manager.attach).toHaveBeenCalledWith('session-9')
   })
 
-  it('redraws an already-open session from memory rather than from disk', async () => {
+  it('removes a session for good', async () => {
     await loadMain()
-    agent.history = [{ role: 'user', content: 'In memory' }]
-    const sessionId = await openSession()
-    harness.toAgentEvents.mockReturnValue([{ type: 'prompt', text: 'In memory' }])
 
-    const restored = await electron.ipcHandlers.get('session:resume')?.(
-      { sender: sender() },
-      sessionId
-    )
-
-    expect(agent.store.load).not.toHaveBeenCalled()
-    expect(harness.toAgentEvents).toHaveBeenCalledWith(agent.history)
-    expect(restored).toEqual({
-      id: sessionId,
-      cwd: '/tmp/workspace',
-      model: 'anthropic/claude-haiku-4.5',
-      events: [{ type: 'prompt', text: 'In memory' }]
-    })
-    agent.history = []
-  })
-
-  it('stops and forgets a session when it is deleted', async () => {
-    await loadMain()
-    const sessionId = await openSession()
-
-    await electron.ipcHandlers.get('session:delete')?.({ sender: sender() }, sessionId)
-
-    expect(agent.discard).toHaveBeenCalledOnce()
-    expect(agent.store.delete).toHaveBeenCalledWith(sessionId)
-    await expect(
-      electron.ipcHandlers.get('session:prompt')?.(
-        { sender: sender() },
-        { sessionId, prompt: 'Hi' }
-      )
-    ).rejects.toThrow('That session is no longer open.')
-  })
-
-  it('opens new sessions on the remembered model', async () => {
-    await loadMain()
-    support.readDefaultModel.mockResolvedValue('openai/gpt-5.1-codex')
-
-    agent.createWorkspaceSession.mockReturnValue({ id: 'session-1', cwd: '/tmp/workspace' })
-    const opened = await electron.ipcHandlers.get('session:open')?.(
-      { sender: sender() },
-      '/tmp/workspace'
-    )
-
-    expect(opened).toEqual({ id: 'session-1', model: 'openai/gpt-5.1-codex' })
-    expect(agent.createWorkspaceSession).toHaveBeenCalledWith(
-      '/tmp/workspace',
-      'openai/gpt-5.1-codex'
-    )
+    await expect(invoke('session:delete', 'session-1')).resolves.toBeUndefined()
+    expect(manager.delete).toHaveBeenCalledWith('session-1')
   })
 
   it('switches a session model and remembers it for the next one', async () => {
     await loadMain()
-    const sessionId = await openSession()
 
-    await electron.ipcHandlers.get('session:set-model')?.(
-      { sender: sender() },
-      { sessionId, model: 'anthropic/claude-opus-5' }
-    )
-
-    expect(agent.setModel).toHaveBeenCalledWith('anthropic/claude-opus-5')
+    await expect(
+      invoke('session:set-model', { sessionId: 'session-1', model: 'anthropic/claude-opus-5' })
+    ).resolves.toBeUndefined()
+    expect(manager.setModel).toHaveBeenCalledWith('session-1', 'anthropic/claude-opus-5')
     expect(support.writeDefaultModel).toHaveBeenCalledWith('anthropic/claude-opus-5')
   })
 
-  it('rejects a model switch for a session that is not open', async () => {
+  it('does not remember a model the session refused', async () => {
     await loadMain()
+    manager.setModel.mockImplementation(() => {
+      throw new Error('That session is no longer open.')
+    })
 
     await expect(
-      electron.ipcHandlers.get('session:set-model')?.(
-        { sender: sender() },
-        { sessionId: 'missing', model: 'anthropic/claude-opus-5' }
-      )
+      invoke('session:set-model', { sessionId: 'missing', model: 'anthropic/claude-opus-5' })
     ).rejects.toThrow('That session is no longer open.')
     expect(support.writeDefaultModel).not.toHaveBeenCalled()
   })
@@ -486,28 +358,9 @@ describe('desktop main process', () => {
     await loadMain()
     support.listModels.mockResolvedValue([{ id: 'anthropic/claude-opus-5', name: 'Claude Opus 5' }])
 
-    await expect(electron.ipcHandlers.get('models:list')?.({ sender: sender() })).resolves.toEqual([
+    await expect(invoke('models:list')).resolves.toEqual([
       { id: 'anthropic/claude-opus-5', name: 'Claude Opus 5' }
     ])
-  })
-
-  it('turns a missing gateway key into an actionable message', async () => {
-    await loadMain()
-    const sessionId = await openSession()
-    const authError = Object.assign(new Error('unauthorized'), { name: 'Auth' })
-    agent.prompt.mockReturnValue(
-      (async function* () {
-        yield { type: 'text', text: 'starting' }
-        throw authError
-      })()
-    )
-
-    await expect(
-      electron.ipcHandlers.get('session:prompt')?.(
-        { sender: sender() },
-        { sessionId, prompt: 'Help me' }
-      )
-    ).rejects.toThrow('No AI Gateway key. Set AI_GATEWAY_API_KEY in apps/desktop/.env.')
   })
 
   it('creates a window on activation only when none remain', async () => {

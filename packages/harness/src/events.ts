@@ -10,6 +10,43 @@ export type AgentEvent =
   | { type: 'aborted' }
   | { type: 'error'; message: string }
 
+export type RunStatus = 'idle' | 'running'
+
+/**
+ * What a watcher hears. Transcript content and run state are separate signals:
+ * an event is something the conversation now contains, a status is what the
+ * session is doing.
+ */
+export type SessionNotification =
+  | { type: 'event'; sessionId: string; event: AgentEvent }
+  | { type: 'status'; sessionId: string; status: RunStatus }
+  /** The whole queue every time it moves, so a late watcher cannot fall behind. */
+  | { type: 'queued'; sessionId: string; prompts: readonly string[] }
+
+/** Everything needed to draw a session, whether or not a turn is in flight. */
+export interface SessionSnapshot {
+  id: string
+  cwd: string
+  model: string
+  status: RunStatus
+  events: readonly AgentEvent[]
+  /** Prompts waiting for the current turn to finish. Sent, but not yet said. */
+  queued: readonly string[]
+}
+
+/**
+ * A saved session as a list of them shows it: what is on disk, plus what it is
+ * doing right now. Only the manager can answer the second half.
+ */
+export interface SessionListing {
+  id: string
+  cwd: string
+  createdAt: string
+  updatedAt: string
+  title: string
+  status: RunStatus
+}
+
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
 }

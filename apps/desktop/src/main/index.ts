@@ -1,121 +1,71 @@
-import { app, BrowserWindow, dialog, ipcMain, type WebContents } from 'electron'
-import { toAgentEvents, type Session } from '@lefa/harness'
-import { GatewayAuthenticationError } from '@ai-sdk/gateway'
+import { app, BrowserWindow, dialog, ipcMain } from 'electron'
 import { join } from 'node:path'
 import {
   modelListChannel,
   sessionAbortChannel,
+  sessionAttachChannel,
   sessionDeleteChannel,
-  sessionEventChannel,
   sessionListChannel,
+  sessionNotifyChannel,
   sessionOpenChannel,
   sessionPromptChannel,
-  sessionResumeChannel,
   sessionSetModelChannel,
   workspaceChannel,
-  type AgentEvent,
   type ModelSummary,
-  type OpenedSession,
-  type RestoredSession,
+  type SessionNotification,
   type SessionPromptInput,
-  type SessionSummary,
+  type SessionSnapshot,
+  type SessionListing,
   type SetModelInput
 } from '../shared/api'
-import { createWorkspaceSession, sessionStore } from './agent'
+import { sessionManager } from './agent'
 import { listModels } from './models'
 import { readDefaultModel, writeDefaultModel } from './settings'
 
-const sessions = new Map<string, Session>()
-
-function send(sender: WebContents, sessionId: string, event: AgentEvent): void {
-  if (sender.isDestroyed()) return
-
-  sender.send(sessionEventChannel, { sessionId, event })
-}
-
-/** Only `.message` survives IPC, so a missing key must say what to do about it. */
-function describe(error: unknown): Error {
-  if (GatewayAuthenticationError.isInstance(error)) {
-    return new Error('No AI Gateway key. Set AI_GATEWAY_API_KEY in apps/desktop/.env.')
+/**
+ * A run reports to every window, not to the one that started it.
+ *
+ * Nothing here knows which session a window is looking at: a watcher that has
+ * moved on simply ignores what it does not need.
+ */
+function broadcast(notification: SessionNotification): void {
+  for (const window of BrowserWindow.getAllWindows()) {
+    if (!window.webContents.isDestroyed())
+      window.webContents.send(sessionNotifyChannel, notification)
   }
-
-  return error instanceof Error ? error : new Error(String(error))
 }
 
 function registerIpcHandlers(): void {
-  ipcMain.handle(sessionOpenChannel, async (_event, cwd: string): Promise<OpenedSession> => {
-    const model = await readDefaultModel()
-    const session = createWorkspaceSession(cwd, model)
-    sessions.set(session.id, session)
-
-    return { id: session.id, model }
+  ipcMain.handle(sessionOpenChannel, async (_event, cwd: string): Promise<SessionSnapshot> => {
+    return sessionManager.open(cwd, await readDefaultModel())
   })
 
-  ipcMain.handle(sessionPromptChannel, async (event, input: SessionPromptInput) => {
-    const session = sessions.get(input.sessionId)
-
-    if (!session) throw new Error('That session is no longer open.')
-
-    try {
-      for await (const agentEvent of session.prompt(input.prompt)) {
-        send(event.sender, input.sessionId, agentEvent)
-      }
-    } catch (error) {
-      throw describe(error)
-    }
+  ipcMain.handle(sessionPromptChannel, (_event, input: SessionPromptInput) => {
+    // Returns as soon as the turn is under way; the run reports itself.
+    sessionManager.prompt(input.sessionId, input.prompt)
   })
 
   ipcMain.handle(sessionAbortChannel, (_event, sessionId: string) => {
-    sessions.get(sessionId)?.abort()
+    sessionManager.abort(sessionId)
   })
 
-  ipcMain.handle(sessionListChannel, (): Promise<SessionSummary[]> => sessionStore.list())
+  ipcMain.handle(sessionListChannel, (): Promise<SessionListing[]> => sessionManager.list())
 
-  ipcMain.handle(sessionResumeChannel, async (_event, sessionId): Promise<RestoredSession> => {
-    // A session already in memory may hold turns newer than the file it was
-    // loaded from, so it redraws from itself rather than from disk.
-    const open = sessions.get(sessionId)
-
-    if (open) {
-      return {
-        id: open.id,
-        cwd: open.cwd,
-        model: open.model,
-        events: toAgentEvents(open.history)
-      }
-    }
-
-    const { meta, model, messages } = await sessionStore.load(sessionId)
-    const session = createWorkspaceSession(meta.cwd, model, {
-      id: meta.id,
-      createdAt: meta.createdAt,
-      title: meta.title,
-      messages
-    })
-    sessions.set(session.id, session)
-
-    return { id: session.id, cwd: session.cwd, model, events: toAgentEvents(messages) }
-  })
+  ipcMain.handle(sessionAttachChannel, (_event, sessionId: string): Promise<SessionSnapshot> =>
+    sessionManager.attach(sessionId)
+  )
 
   ipcMain.handle(sessionSetModelChannel, async (_event, input: SetModelInput) => {
-    const session = sessions.get(input.sessionId)
-
-    if (!session) throw new Error('That session is no longer open.')
-
-    session.setModel(input.model)
+    sessionManager.setModel(input.sessionId, input.model)
     // The latest choice also becomes the default for the next new session.
     await writeDefaultModel(input.model)
   })
 
   ipcMain.handle(modelListChannel, (): Promise<readonly ModelSummary[]> => listModels())
 
-  ipcMain.handle(sessionDeleteChannel, async (_event, sessionId: string) => {
-    // Discard rather than abort: a run still unwinding would otherwise save its
-    // last turn and bring the deleted file back.
-    sessions.get(sessionId)?.discard()
-    sessions.delete(sessionId)
-    await sessionStore.delete(sessionId)
-  })
+  ipcMain.handle(sessionDeleteChannel, (_event, sessionId: string): Promise<void> =>
+    sessionManager.delete(sessionId)
+  )
 
   ipcMain.handle(workspaceChannel, async (event) => {
     const window = BrowserWindow.fromWebContents(event.sender)
@@ -164,6 +114,7 @@ function createWindow(): void {
 
 app.whenReady().then(() => {
   registerIpcHandlers()
+  sessionManager.subscribe(broadcast)
   createWindow()
 
   app.on('activate', () => {
