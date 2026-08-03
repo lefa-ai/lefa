@@ -1,28 +1,8 @@
 import type { ModelMessage } from 'ai'
-import type { AgentEvent } from './events.ts'
+import type { AgentEvent, SessionNotification, SessionSnapshot } from './events.ts'
 import { toAgentEvents } from './replay.ts'
 import type { SessionStore, SessionSummary } from './session-store.ts'
 import { Session } from './session.ts'
-
-export type RunStatus = 'idle' | 'running'
-
-/**
- * What a watcher hears. Transcript content and run state are separate signals:
- * an event is something the conversation now contains, a status is what the
- * session is doing.
- */
-export type SessionNotification =
-  | { type: 'event'; sessionId: string; event: AgentEvent }
-  | { type: 'status'; sessionId: string; status: RunStatus }
-
-/** Everything needed to draw a session, whether or not a turn is in flight. */
-export interface SessionSnapshot {
-  id: string
-  cwd: string
-  model: string
-  status: RunStatus
-  events: readonly AgentEvent[]
-}
 
 export interface SessionManagerOptions {
   store: SessionStore
