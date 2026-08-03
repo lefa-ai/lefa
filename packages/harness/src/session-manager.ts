@@ -1,7 +1,7 @@
 import type { ModelMessage } from 'ai'
-import type { AgentEvent, SessionNotification, SessionSnapshot } from './events.ts'
+import type { AgentEvent, SessionListing, SessionNotification, SessionSnapshot } from './events.ts'
 import { toAgentEvents } from './replay.ts'
-import type { SessionStore, SessionSummary } from './session-store.ts'
+import type { SessionStore } from './session-store.ts'
 import { Session } from './session.ts'
 
 export interface SessionManagerOptions {
@@ -125,8 +125,19 @@ export class SessionManager {
     await this.store.delete(sessionId)
   }
 
-  list(): Promise<SessionSummary[]> {
-    return this.store.list()
+  /**
+   * Every saved session, each one saying whether it is working.
+   *
+   * The store only knows what was written down; which sessions are busy is the
+   * manager's alone to answer, so it is added here rather than persisted.
+   */
+  async list(): Promise<SessionListing[]> {
+    const summaries = await this.store.list()
+
+    return summaries.map((summary) => ({
+      ...summary,
+      status: this.runs.has(summary.id) ? ('running' as const) : ('idle' as const)
+    }))
   }
 
   private async drain(session: Session, run: Run, text: string): Promise<void> {
