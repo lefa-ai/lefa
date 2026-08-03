@@ -3,9 +3,9 @@ import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, it } from 'node:test'
-import { customProvider, type ModelMessage } from 'ai'
+import { customProvider, type UIMessage } from 'ai'
 import { convertArrayToReadableStream, MockLanguageModelV3 } from 'ai/test'
-import type { SessionNotification } from './events.ts'
+import type { SessionNotification } from './protocol.ts'
 import { SessionManager } from './session-manager.ts'
 import { SessionStore } from './session-store.ts'
 
@@ -62,35 +62,16 @@ function useModel(model: MockLanguageModelV3, id = 'test/model'): string {
   return id
 }
 
-/** A store whose writes can be held open, to catch a snapshot mid-save. */
-class HeldStore extends SessionStore {
-  private gate: Promise<void> | undefined
-  private release: (() => void) | undefined
-  private started: (() => void) | undefined
-  saving: Promise<void> = Promise.resolve()
+function textOf(message: UIMessage | undefined): string {
+  return (message?.parts ?? [])
+    .filter((part) => part.type === 'text')
+    .map((part) => part.text)
+    .join('')
+}
 
-  hold(): void {
-    this.gate = new Promise((resolve) => {
-      this.release = resolve
-    })
-    this.saving = new Promise((resolve) => {
-      this.started = resolve
-    })
-  }
-
-  resume(): void {
-    this.release?.()
-  }
-
-  override async append(
-    meta: Parameters<SessionStore['append']>[0],
-    model: string,
-    messages: readonly ModelMessage[]
-  ): Promise<void> {
-    this.started?.()
-    await this.gate
-    await super.append(meta, model, messages)
-  }
+/** What the conversation looks like: who said what, in order. */
+function transcript(messages: readonly UIMessage[]): string[] {
+  return messages.map((message) => `${message.role}: ${textOf(message)}`)
 }
 
 async function waitFor(check: () => boolean | Promise<boolean>, what: string): Promise<void> {
@@ -107,10 +88,9 @@ async function waitFor(check: () => boolean | Promise<boolean>, what: string): P
 
 interface Harness {
   cwd: string
-  store: HeldStore
+  store: SessionStore
   manager: SessionManager
   heard: SessionNotification[]
-  events: (sessionId: string) => unknown[]
   /** Waits for the session's `times`-th finished turn, not just any past one. */
   idle: (sessionId: string, times?: number) => Promise<void>
 }
@@ -123,7 +103,7 @@ async function withManager(
   const root = await mkdtemp(join(tmpdir(), 'lefa-manager-store-'))
 
   try {
-    const store = new HeldStore(root)
+    const store = new SessionStore(root)
     const manager = new SessionManager({ store, ...options })
     const heard: SessionNotification[] = []
     manager.subscribe((notification) => heard.push(notification))
@@ -133,12 +113,6 @@ async function withManager(
       store,
       manager,
       heard,
-      events: (sessionId) =>
-        heard
-          .filter(
-            (notification) => notification.type === 'event' && notification.sessionId === sessionId
-          )
-          .map((notification) => (notification as { event: unknown }).event),
       idle: (sessionId, times = 1) =>
         waitFor(
           () =>
@@ -167,12 +141,13 @@ describe('session manager', () => {
       assert.equal(opened.cwd, cwd)
       assert.equal(opened.model, 'test/model')
       assert.equal(opened.status, 'idle')
-      assert.deepEqual(opened.events, [])
+      assert.deepEqual(opened.messages, [])
+      assert.deepEqual(opened.queued, [])
     })
   })
 
   it('returns from a prompt before the turn it started has finished', async () => {
-    await withManager(async ({ cwd, manager, heard }) => {
+    await withManager(async ({ cwd, manager, heard, idle }) => {
       const turn = openResponse()
       const model = new MockLanguageModelV3({ doStream: [turn.response] })
       const { id } = manager.open(cwd, useModel(model))
@@ -181,11 +156,6 @@ describe('session manager', () => {
 
       // The call has already returned while the model is still streaming.
       assert.deepEqual(heard[0], { type: 'status', sessionId: id, status: 'running' })
-      assert.deepEqual(heard[1], {
-        type: 'event',
-        sessionId: id,
-        event: { type: 'prompt', text: 'Take your time' }
-      })
       assert.equal((await manager.attach(id)).status, 'running')
 
       turn.push({ type: 'stream-start', warnings: [] })
@@ -193,16 +163,13 @@ describe('session manager', () => {
       turn.push({ type: 'text-delta', id: 'text-1', delta: 'Done.' })
       turn.push({ type: 'text-end', id: 'text-1' })
       turn.finish()
+      await idle(id)
 
-      await waitFor(
-        () => heard.some((n) => n.type === 'status' && n.status === 'idle'),
-        'the turn to finish'
-      )
       assert.equal((await manager.attach(id)).status, 'idle')
     })
   })
 
-  it('shows the committed conversation and the turn in flight together', async () => {
+  it('shows the conversation and the reply in flight together', async () => {
     await withManager(async ({ cwd, manager, idle }) => {
       const second = openResponse()
       const model = new MockLanguageModelV3({
@@ -218,19 +185,19 @@ describe('session manager', () => {
       second.push({ type: 'text-start', id: 'text-2' })
       second.push({ type: 'text-delta', id: 'text-2', delta: 'It holds ' })
 
-      await waitFor(async () => {
-        const events = (await manager.attach(id)).events
-        return events.some((event) => event.type === 'text' && event.text === 'It holds ')
-      }, 'the partial answer to arrive')
+      await waitFor(
+        async () => textOf((await manager.attach(id)).messages.at(-1)) === 'It holds ',
+        'the partial answer to arrive'
+      )
 
       const attached = await manager.attach(id)
 
       assert.equal(attached.status, 'running')
-      assert.deepEqual(attached.events, [
-        { type: 'prompt', text: 'List the files' },
-        { type: 'text', text: 'Two files.' },
-        { type: 'prompt', text: 'Read the first' },
-        { type: 'text', text: 'It holds ' }
+      assert.deepEqual(transcript(attached.messages), [
+        'user: List the files',
+        'assistant: Two files.',
+        'user: Read the first',
+        'assistant: It holds '
       ])
 
       second.push({ type: 'text-end', id: 'text-2' })
@@ -239,30 +206,22 @@ describe('session manager', () => {
     })
   })
 
-  it('does not show the turn twice while it is being saved', async () => {
-    await withManager(async ({ cwd, manager, store, idle }) => {
-      const model = new MockLanguageModelV3({
-        doStream: [textResponse('Saved soon.')]
-      })
+  it('sends the same message again as it grows, never a second copy', async () => {
+    await withManager(async ({ cwd, manager, heard, idle }) => {
+      const model = new MockLanguageModelV3({ doStream: [textResponse('Growing')] })
       const { id } = manager.open(cwd, useModel(model))
 
-      // The session commits the turn to its history and only then writes it, so
-      // a snapshot taken during the write is the one that could double up.
-      store.hold()
-      manager.prompt(id, 'Write it down')
-      await store.saving
-
-      const attached = await manager.attach(id)
-
-      assert.equal(attached.status, 'running')
-      assert.deepEqual(attached.events, [
-        { type: 'prompt', text: 'Write it down' },
-        { type: 'text', text: 'Saved soon.' }
-      ])
-
-      store.resume()
+      manager.prompt(id, 'Go')
       await idle(id)
-      assert.deepEqual((await manager.attach(id)).events, attached.events)
+
+      const sent = heard.filter((notification) => notification.type === 'message')
+      const ids = new Set(sent.map((notification) => notification.message.id))
+
+      assert.equal(ids.size, 2, 'one message asked, one answered — however many updates')
+      assert.deepEqual(transcript((await manager.attach(id)).messages), [
+        'user: Go',
+        'assistant: Growing'
+      ])
     })
   })
 
@@ -283,18 +242,19 @@ describe('session manager', () => {
       turn.finish()
       await idle(id)
 
-      assert.deepEqual(
-        late.filter((n) => n.type === 'event').map((n) => n.event),
-        [{ type: 'text', text: 'Still here.' }]
+      assert.ok(
+        late.some(
+          (notification) =>
+            notification.type === 'message' && textOf(notification.message) === 'Still here.'
+        ),
+        'it heard the rest of the turn it walked in on'
       )
     })
   })
 
   it('stops telling a watcher that has unsubscribed', async () => {
     await withManager(async ({ cwd, manager, idle }) => {
-      const model = new MockLanguageModelV3({
-        doStream: [textResponse('One')]
-      })
+      const model = new MockLanguageModelV3({ doStream: [textResponse('One')] })
       const { id } = manager.open(cwd, useModel(model))
       const seen: SessionNotification[] = []
       const stop = manager.subscribe((notification) => seen.push(notification))
@@ -307,7 +267,7 @@ describe('session manager', () => {
     })
   })
 
-  it('reports a run failure as an event and returns to idle', async () => {
+  it('reports a run failure and returns to idle', async () => {
     await withManager(
       async ({ cwd, manager, heard, idle }) => {
         const model = new MockLanguageModelV3({
@@ -319,15 +279,11 @@ describe('session manager', () => {
         await idle(id)
 
         assert.deepEqual(heard.at(-2), {
-          type: 'event',
+          type: 'error',
           sessionId: id,
-          event: { type: 'error', message: 'No key. Set one.' }
+          error: 'No key. Set one.'
         })
-        assert.deepEqual(heard.at(-1), {
-          type: 'status',
-          sessionId: id,
-          status: 'idle'
-        })
+        assert.deepEqual(heard.at(-1), { type: 'status', sessionId: id, status: 'idle' })
         assert.equal((await manager.attach(id)).status, 'idle')
       },
       { describeError: () => 'No key. Set one.' }
@@ -345,15 +301,15 @@ describe('session manager', () => {
       await idle(id)
 
       assert.deepEqual(heard.at(-2), {
-        type: 'event',
+        type: 'error',
         sessionId: id,
-        event: { type: 'error', message: 'model is overloaded' }
+        error: 'model is overloaded'
       })
     })
   })
 
   it('queues a prompt sent into a turn already running, and runs it next', async () => {
-    await withManager(async ({ cwd, manager, heard, events, idle }) => {
+    await withManager(async ({ cwd, manager, heard, idle }) => {
       const turn = openResponse()
       const model = new MockLanguageModelV3({
         doStream: [turn.response, textResponse('On it.'), textResponse('That too.')]
@@ -372,6 +328,9 @@ describe('session manager', () => {
       assert.deepEqual((await manager.attach(id)).queued, ['Also do this', 'And this'])
 
       turn.push({ type: 'stream-start', warnings: [] })
+      turn.push({ type: 'text-start', id: 'text-1' })
+      turn.push({ type: 'text-delta', id: 'text-1', delta: 'Started.' })
+      turn.push({ type: 'text-end', id: 'text-1' })
       turn.finish()
       await idle(id)
 
@@ -380,55 +339,22 @@ describe('session manager', () => {
         heard.filter((n) => n.type === 'status').map((n) => n.status),
         ['running', 'idle']
       )
-      assert.deepEqual(
-        events(id).filter((event) => (event as { type: string }).type === 'prompt'),
-        [
-          { type: 'prompt', text: 'Start' },
-          { type: 'prompt', text: 'Also do this' },
-          { type: 'prompt', text: 'And this' }
-        ]
-      )
-      assert.equal(model.doStreamCalls.length, 3, 'every queued prompt ran')
+      assert.deepEqual(transcript((await manager.attach(id)).messages), [
+        'user: Start',
+        'assistant: Started.',
+        'user: Also do this',
+        'assistant: On it.',
+        'user: And this',
+        'assistant: That too.'
+      ])
       assert.deepEqual((await manager.attach(id)).queued, [])
     })
   })
 
-  it('shows a queued prompt to a watcher that arrives mid-turn', async () => {
-    await withManager(async ({ cwd, manager, events, idle }) => {
-      const turn = openResponse()
-      const model = new MockLanguageModelV3({
-        doStream: [turn.response, textResponse('Next.')]
-      })
-      const { id } = manager.open(cwd, useModel(model))
-
-      manager.prompt(id, 'Start')
-      turn.push({ type: 'stream-start', warnings: [] })
-      turn.push({ type: 'text-start', id: 'text-1' })
-      turn.push({ type: 'text-delta', id: 'text-1', delta: 'Working' })
-      manager.prompt(id, 'Then this')
-      await waitFor(() => events(id).length === 2, 'the turn to start speaking')
-
-      const attached = await manager.attach(id)
-
-      assert.equal(attached.status, 'running')
-      assert.deepEqual(attached.queued, ['Then this'])
-      assert.deepEqual(attached.events, [
-        { type: 'prompt', text: 'Start' },
-        { type: 'text', text: 'Working' }
-      ])
-
-      turn.push({ type: 'text-end', id: 'text-1' })
-      turn.finish()
-      await idle(id)
-    })
-  })
-
   it('drops the queue when the turn it was written for is interrupted', async () => {
-    await withManager(async ({ cwd, manager, heard, events, idle }) => {
+    await withManager(async ({ cwd, manager, idle }) => {
       const turn = openResponse()
-      const model = new MockLanguageModelV3({
-        doStream: [turn.response, textResponse('Unused')]
-      })
+      const model = new MockLanguageModelV3({ doStream: [turn.response, textResponse('Unused')] })
       const { id } = manager.open(cwd, useModel(model))
 
       manager.prompt(id, 'Take a while')
@@ -436,42 +362,18 @@ describe('session manager', () => {
       turn.push({ type: 'text-start', id: 'text-1' })
       turn.push({ type: 'text-delta', id: 'text-1', delta: 'Still working' })
       manager.prompt(id, 'Follow up on that')
-      await waitFor(() => events(id).length === 2, 'the turn to start speaking')
+      await waitFor(
+        async () => textOf((await manager.attach(id)).messages.at(-1)) === 'Still working',
+        'the turn to start speaking'
+      )
 
       manager.abort(id)
       // Wake the reader so the abort is observed and the stream closes.
       turn.push({ type: 'text-delta', id: 'text-1', delta: ' on it' })
       await idle(id)
 
-      assert.deepEqual(heard.at(-2), {
-        type: 'event',
-        sessionId: id,
-        event: { type: 'aborted' }
-      })
       assert.equal(model.doStreamCalls.length, 1, 'the follow-up was written for a plan that ended')
       assert.deepEqual((await manager.attach(id)).queued, [])
-    })
-  })
-
-  it('interrupts a running turn', async () => {
-    await withManager(async ({ cwd, manager, events, idle }) => {
-      const turn = openResponse()
-      const model = new MockLanguageModelV3({ doStream: [turn.response] })
-      const { id } = manager.open(cwd, useModel(model))
-
-      manager.prompt(id, 'Take a while')
-      turn.push({ type: 'stream-start', warnings: [] })
-      turn.push({ type: 'text-start', id: 'text-1' })
-      turn.push({ type: 'text-delta', id: 'text-1', delta: 'Still working' })
-      await waitFor(() => events(id).length === 2, 'the turn to start speaking')
-
-      manager.abort(id)
-      // Wake the reader so the abort is observed and the stream closes.
-      turn.push({ type: 'text-delta', id: 'text-1', delta: ' on it' })
-      await idle(id)
-
-      assert.deepEqual(events(id).at(-1), { type: 'aborted' })
-      assert.equal((await manager.attach(id)).status, 'idle')
     })
   })
 
@@ -518,22 +420,20 @@ describe('session manager', () => {
       manager.prompt(id, 'First')
       await idle(id)
       manager.prompt(id, 'Second')
-      await waitFor(async () => (await manager.attach(id)).events.length === 4, 'the second turn')
+      await idle(id, 2)
 
-      assert.deepEqual((await manager.attach(id)).events, [
-        { type: 'prompt', text: 'First' },
-        { type: 'text', text: 'Stored' },
-        { type: 'prompt', text: 'Second' },
-        { type: 'text', text: 'Newer' }
+      assert.deepEqual(transcript((await manager.attach(id)).messages), [
+        'user: First',
+        'assistant: Stored',
+        'user: Second',
+        'assistant: Newer'
       ])
     })
   })
 
   it('loads a session from disk and lists what is saved', async () => {
     await withManager(async ({ cwd, store, manager, idle }) => {
-      const model = new MockLanguageModelV3({
-        doStream: [textResponse('Two files.')]
-      })
+      const model = new MockLanguageModelV3({ doStream: [textResponse('Two files.')] })
       const { id } = manager.open(cwd, useModel(model))
 
       manager.prompt(id, 'List the files')
@@ -546,9 +446,9 @@ describe('session manager', () => {
       assert.equal(attached.cwd, cwd)
       assert.equal(attached.model, 'test/model')
       assert.equal(attached.status, 'idle')
-      assert.deepEqual(attached.events, [
-        { type: 'prompt', text: 'List the files' },
-        { type: 'text', text: 'Two files.' }
+      assert.deepEqual(transcript(attached.messages), [
+        'user: List the files',
+        'assistant: Two files.'
       ])
       assert.deepEqual(
         (await reopened.list()).map((listing) => [listing.title, listing.status]),
@@ -573,12 +473,11 @@ describe('session manager', () => {
       await idle(busy.id)
 
       manager.prompt(busy.id, 'Now take a while')
-      const listed = await manager.list()
 
-      assert.deepEqual(Object.fromEntries(listed.map((listing) => [listing.id, listing.status])), {
-        [quiet.id]: 'idle',
-        [busy.id]: 'running'
-      })
+      assert.deepEqual(
+        Object.fromEntries((await manager.list()).map((listing) => [listing.id, listing.status])),
+        { [quiet.id]: 'idle', [busy.id]: 'running' }
+      )
 
       second.push({ type: 'stream-start', warnings: [] })
       second.finish()
@@ -586,16 +485,14 @@ describe('session manager', () => {
 
       assert.ok(
         (await manager.list()).every((listing) => listing.status === 'idle'),
-        'a finished run leaves nothing marked as working'
+        'a finished turn leaves nothing marked as working'
       )
     })
   })
 
   it('stops a session and removes it for good', async () => {
     await withManager(async ({ cwd, manager, idle }) => {
-      const model = new MockLanguageModelV3({
-        doStream: [textResponse('Gone soon')]
-      })
+      const model = new MockLanguageModelV3({ doStream: [textResponse('Gone soon')] })
       const { id } = manager.open(cwd, useModel(model))
 
       manager.prompt(id, 'Something')

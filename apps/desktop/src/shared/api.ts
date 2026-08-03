@@ -1,10 +1,9 @@
 import type {
-  AgentEvent,
   RunStatus,
   SessionListing,
   SessionNotification,
   SessionSnapshot
-} from '@lefa/harness/events'
+} from '@lefa/harness/protocol'
 
 export const sessionOpenChannel = 'session:open'
 export const sessionPromptChannel = 'session:prompt'
@@ -17,7 +16,7 @@ export const sessionSetModelChannel = 'session:set-model'
 export const modelListChannel = 'models:list'
 export const workspaceChannel = 'workspace:select-directory'
 
-export type { AgentEvent, RunStatus, SessionListing, SessionNotification, SessionSnapshot }
+export type { RunStatus, SessionListing, SessionNotification, SessionSnapshot }
 
 export interface SessionPromptInput {
   sessionId: string

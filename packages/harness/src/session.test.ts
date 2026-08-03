@@ -3,9 +3,8 @@ import { mkdtemp, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, it } from 'node:test'
-import { customProvider } from 'ai'
+import { customProvider, type UIMessage } from 'ai'
 import { convertArrayToReadableStream, MockLanguageModelV3 } from 'ai/test'
-import type { AgentEvent } from './events.ts'
 import { SessionStore } from './session-store.ts'
 import { Session } from './session.ts'
 
@@ -17,18 +16,14 @@ const usage = {
 type StreamResponse = Awaited<ReturnType<MockLanguageModelV3['doStream']>>
 type StreamPart = StreamResponse['stream'] extends ReadableStream<infer Part> ? Part : never
 
-function textResponse(text: string): StreamResponse {
+function textResponse(...deltas: string[]): StreamResponse {
   return {
     stream: convertArrayToReadableStream<StreamPart>([
       { type: 'stream-start', warnings: [] },
       { type: 'text-start', id: 'text-1' },
-      { type: 'text-delta', id: 'text-1', delta: text },
+      ...deltas.map((delta) => ({ type: 'text-delta' as const, id: 'text-1', delta })),
       { type: 'text-end', id: 'text-1' },
-      {
-        type: 'finish',
-        finishReason: { unified: 'stop', raw: undefined },
-        usage
-      }
+      { type: 'finish', finishReason: { unified: 'stop', raw: undefined }, usage }
     ])
   }
 }
@@ -43,20 +38,13 @@ function writeResponse(path: string, content: string): StreamResponse {
         toolName: 'write',
         input: JSON.stringify({ path, content })
       },
-      {
-        type: 'finish',
-        finishReason: { unified: 'tool-calls', raw: undefined },
-        usage
-      }
+      { type: 'finish', finishReason: { unified: 'tool-calls', raw: undefined }, usage }
     ])
   }
 }
 
-/** A model response the test feeds by hand, so a run can be interrupted mid-stream. */
-function openResponse(): {
-  response: StreamResponse
-  push: (part: StreamPart) => void
-} {
+/** A response the test feeds by hand, so a turn can be interrupted mid-stream. */
+function openResponse(): { response: StreamResponse; push: (part: StreamPart) => void } {
   let controller!: ReadableStreamDefaultController<StreamPart>
   const stream = new ReadableStream<StreamPart>({
     start(streamController) {
@@ -67,30 +55,37 @@ function openResponse(): {
   return { response: { stream }, push: (part) => controller.enqueue(part) }
 }
 
-/**
- * Sessions run on Gateway model ids, so a test model is registered as the
- * default provider rather than smuggled in as an object.
- */
 function useModel(model: MockLanguageModelV3, id = 'test/model'): string {
-  globalThis.AI_SDK_DEFAULT_PROVIDER = customProvider({
-    languageModels: { [id]: model }
-  })
+  globalThis.AI_SDK_DEFAULT_PROVIDER = customProvider({ languageModels: { [id]: model } })
 
   return id
 }
 
-async function withWorkspace(run: (cwd: string) => Promise<void>): Promise<void> {
+function textOf(message: UIMessage | undefined): string {
+  return (message?.parts ?? [])
+    .filter((part) => part.type === 'text')
+    .map((part) => part.text)
+    .join('')
+}
+
+async function withWorkspace(run: (cwd: string, root: string) => Promise<void>): Promise<void> {
   const cwd = await mkdtemp(join(tmpdir(), 'lefa-session-'))
+  const root = await mkdtemp(join(tmpdir(), 'lefa-session-store-'))
 
   try {
-    await run(cwd)
+    await run(cwd, root)
   } finally {
     await rm(cwd, { recursive: true, force: true })
+    await rm(root, { recursive: true, force: true })
   }
 }
 
-function promptText(prompt: unknown): string {
-  return JSON.stringify(prompt)
+async function drain(session: Session, text: string): Promise<UIMessage[]> {
+  const seen: UIMessage[] = []
+
+  for await (const message of session.prompt(text)) seen.push(message)
+
+  return seen
 }
 
 describe('session', () => {
@@ -101,7 +96,43 @@ describe('session', () => {
       assert.equal(session.cwd, cwd)
       assert.match(session.id, /^[0-9a-f-]{36}$/)
       assert.equal(session.isRunning, false)
-      assert.notEqual(session.id, new Session(useModel(new MockLanguageModelV3()), cwd).id)
+      assert.deepEqual(session.messages, [])
+    })
+  })
+
+  it('says what was asked before it says anything back', async () => {
+    await withWorkspace(async (cwd) => {
+      const model = new MockLanguageModelV3({ doStream: [textResponse('Two files.')] })
+      const session = new Session(useModel(model), cwd)
+
+      const seen = await drain(session, 'List the files')
+
+      assert.equal(seen[0]?.role, 'user')
+      assert.equal(textOf(seen[0]), 'List the files')
+      assert.equal(seen.at(-1)?.role, 'assistant')
+      assert.equal(textOf(seen.at(-1)), 'Two files.')
+    })
+  })
+
+  it('yields the same reply again as it grows', async () => {
+    await withWorkspace(async (cwd) => {
+      const model = new MockLanguageModelV3({ doStream: [textResponse('It ', 'holds ', 'these.')] })
+      const session = new Session(useModel(model), cwd)
+
+      const replies = (await drain(session, 'What is in it?')).filter(
+        (message) => message.role === 'assistant'
+      )
+      const ids = new Set(replies.map((reply) => reply.id))
+
+      assert.ok(replies.length > 1, 'the reply arrived in pieces')
+      assert.equal(ids.size, 1, 'every piece was the same message, further along')
+      assert.deepEqual(
+        replies.map(textOf),
+        replies.map(textOf).toSorted((first, second) => first.length - second.length),
+        'it only ever grew'
+      )
+      assert.equal(textOf(replies.at(-1)), 'It holds these.')
+      assert.equal(session.messages.length, 2, 'the conversation kept one reply, not several')
     })
   })
 
@@ -112,347 +143,185 @@ describe('session', () => {
       })
       const session = new Session(useModel(model), cwd)
 
-      for await (const _event of session.prompt('List the files')) void _event
-      for await (const _event of session.prompt('What is in the first one?')) void _event
+      await drain(session, 'List the files')
+      await drain(session, 'What is in the first one?')
 
       assert.equal(model.doStreamCalls.length, 2)
-      const secondTurn = promptText(model.doStreamCalls[1]?.prompt)
-
-      assert.match(secondTurn, /List the files/)
-      assert.match(secondTurn, /Two files\./)
-      assert.match(secondTurn, /What is in the first one\?/)
+      assert.match(JSON.stringify(model.doStreamCalls[1]?.prompt), /Two files\./)
+      assert.deepEqual(
+        session.messages.map((message) => message.role),
+        ['user', 'assistant', 'user', 'assistant']
+      )
     })
   })
 
-  it('reports that it is running only while a turn is in flight', async () => {
+  it('records what produced each reply', async () => {
     await withWorkspace(async (cwd) => {
-      const model = new MockLanguageModelV3({
-        doStream: [textResponse('Done')]
-      })
+      const model = new MockLanguageModelV3({ doStream: [textResponse('Done')] })
       const session = new Session(useModel(model), cwd)
-      const run = session.prompt('Help me')
 
-      await run.next()
-      assert.equal(session.isRunning, true)
+      await drain(session, 'Go')
 
-      for await (const _event of run) void _event
-      assert.equal(session.isRunning, false)
+      assert.deepEqual(session.messages.at(-1)?.metadata, { model: 'test/model' })
     })
   })
 
-  it('refuses a second turn while one is already running', async () => {
-    await withWorkspace(async (cwd) => {
-      const model = new MockLanguageModelV3({
-        doStream: [textResponse('Done')]
-      })
-      const session = new Session(useModel(model), cwd)
-      const run = session.prompt('Help me')
-      await run.next()
+  it('writes each message as it goes', async () => {
+    await withWorkspace(async (cwd, root) => {
+      const store = new SessionStore(root)
+      const model = new MockLanguageModelV3({ doStream: [textResponse('Saved.')] })
+      const session = new Session(useModel(model), cwd, { store })
 
-      await assert.rejects(async () => {
-        for await (const _event of session.prompt('And this')) void _event
-      }, /The session is already running/)
+      await drain(session, 'Write it down')
 
-      for await (const _event of run) void _event
+      const reloaded = await store.load(session.id)
+
+      assert.equal(reloaded.meta.title, 'Write it down')
+      assert.equal(reloaded.meta.model, 'test/model')
+      // Through JSON on both sides: a key set to undefined does not survive the
+      // trip, and neither side is wrong about that.
+      assert.deepEqual(reloaded.messages, JSON.parse(JSON.stringify(session.messages)))
     })
   })
 
-  it('keeps completed steps when a run is interrupted', { timeout: 10_000 }, async () => {
-    await withWorkspace(async (cwd) => {
+  it('keeps what an interrupted turn managed to say', async () => {
+    await withWorkspace(async (cwd, root) => {
+      const store = new SessionStore(root)
       const interrupted = openResponse()
-      const model = new MockLanguageModelV3({
-        doStream: [
-          writeResponse('created.txt', 'from the agent'),
-          interrupted.response,
-          textResponse('Picking up where we left off.')
-        ]
-      })
-      const session = new Session(useModel(model), cwd)
-      const events: AgentEvent[] = []
+      const model = new MockLanguageModelV3({ doStream: [interrupted.response] })
+      const session = new Session(useModel(model), cwd, { store })
 
       interrupted.push({ type: 'stream-start', warnings: [] })
       interrupted.push({ type: 'text-start', id: 'text-1' })
-      interrupted.push({
-        type: 'text-delta',
-        id: 'text-1',
-        delta: 'Still working'
-      })
+      interrupted.push({ type: 'text-delta', id: 'text-1', delta: 'Still working' })
 
-      for await (const event of session.prompt('Create the file')) {
-        events.push(event)
-
-        if (event.type === 'text') {
+      for await (const message of session.prompt('Take a while')) {
+        if (message.role === 'assistant' && textOf(message)) {
           session.abort()
           // Wake the reader so the abort is observed and the stream closes.
-          interrupted.push({
-            type: 'text-delta',
-            id: 'text-1',
-            delta: ' on it'
-          })
+          interrupted.push({ type: 'text-delta', id: 'text-1', delta: ' on it' })
         }
       }
 
       assert.equal(session.isRunning, false)
-      assert.equal(events.at(-1)?.type, 'aborted')
-      assert.ok(events.some((event) => event.type === 'tool-result'))
-
-      for await (const _event of session.prompt('Carry on')) void _event
-
-      const finalTurn = promptText(model.doStreamCalls[2]?.prompt)
-      assert.match(finalTurn, /Create the file/)
-      assert.match(finalTurn, /created\.txt/, 'the completed write step survives the interrupt')
-      assert.doesNotMatch(finalTurn, /Still working/, 'the interrupted step is discarded')
-      assert.match(finalTurn, /Carry on/)
+      const saved = await store.load(session.id)
+      assert.match(textOf(saved.messages.at(-1)), /Still working/)
+      assert.equal(saved.messages.length, 2, 'the half-finished reply is on disk with the prompt')
     })
   })
 
-  it(
-    'remembers only the prompt when no step completed before the interrupt',
-    { timeout: 10_000 },
-    async () => {
-      await withWorkspace(async (cwd) => {
-        const interrupted = openResponse()
-        const model = new MockLanguageModelV3({
-          doStream: [interrupted.response, textResponse('Ready')]
-        })
-        const session = new Session(useModel(model), cwd)
-        const events: AgentEvent[] = []
-
-        interrupted.push({ type: 'stream-start', warnings: [] })
-        interrupted.push({ type: 'text-start', id: 'text-1' })
-        interrupted.push({
-          type: 'text-delta',
-          id: 'text-1',
-          delta: 'Thinking'
-        })
-
-        for await (const event of session.prompt('Start something')) {
-          events.push(event)
-
-          if (event.type === 'text') {
-            session.abort()
-            interrupted.push({
-              type: 'text-delta',
-              id: 'text-1',
-              delta: ' about it'
-            })
-          }
-        }
-
-        assert.equal(events.at(-1)?.type, 'aborted')
-        assert.equal(session.isRunning, false)
-
-        for await (const _event of session.prompt('Try again')) void _event
-
-        const secondTurn = promptText(model.doStreamCalls[1]?.prompt)
-
-        assert.match(secondTurn, /Start something/)
-        assert.match(secondTurn, /Try again/)
-        assert.doesNotMatch(secondTurn, /Thinking/, 'nothing completed, so nothing is remembered')
-      })
-    }
-  )
-
-  it('propagates a failure that is not an interruption', async () => {
+  it('sends an interrupted tool call to nobody', async () => {
     await withWorkspace(async (cwd) => {
+      const interrupted = openResponse()
       const model = new MockLanguageModelV3({
-        doStream: () => {
-          throw new Error('Rate limited')
-        }
+        doStream: [interrupted.response, textResponse('Carrying on.')]
       })
       const session = new Session(useModel(model), cwd)
 
-      await assert.rejects(async () => {
-        for await (const _event of session.prompt('Help me')) void _event
-      }, /Rate limited/)
-      assert.equal(session.isRunning, false)
+      interrupted.push({ type: 'stream-start', warnings: [] })
+      interrupted.push({
+        type: 'tool-input-start',
+        id: 'call-1',
+        toolName: 'bash'
+      })
+      interrupted.push({ type: 'tool-input-delta', id: 'call-1', delta: '{"command":"sleep' })
+
+      for await (const message of session.prompt('Run something slow')) {
+        if (message.role === 'assistant') {
+          session.abort()
+          interrupted.push({ type: 'tool-input-delta', id: 'call-1', delta: ' 60"}' })
+        }
+      }
+
+      // A tool call with no result is a fine thing to have said and an
+      // impossible thing to send, so the next turn must still go through.
+      await drain(session, 'Never mind, carry on')
+
+      assert.equal(model.doStreamCalls.length, 2)
     })
   })
 
-  it('leaves the history untouched when a turn fails', async () => {
+  it('runs a tool and remembers what it returned', async () => {
     await withWorkspace(async (cwd) => {
-      let attempts = 0
       const model = new MockLanguageModelV3({
-        doStream: async () => {
-          attempts += 1
-          if (attempts === 1) throw new Error('Rate limited')
-
-          return textResponse('Recovered')
-        }
+        doStream: [writeResponse('created.txt', 'from the agent'), textResponse('Created it.')]
       })
       const session = new Session(useModel(model), cwd)
 
+      await drain(session, 'Create the file')
+
+      assert.equal(await readFile(join(cwd, 'created.txt'), 'utf8'), 'from the agent')
+      const parts = session.messages.flatMap((message) => message.parts)
+      const tool = parts.find((part) => part.type.startsWith('tool-'))
+      assert.equal((tool as { state?: string })?.state, 'output-available')
+    })
+  })
+
+  it('refuses to start a second turn while one is running', async () => {
+    await withWorkspace(async (cwd) => {
+      const model = new MockLanguageModelV3({ doStream: [textResponse('Only once')] })
+      const session = new Session(useModel(model), cwd)
+      const turn = session.prompt('First')
+
+      await turn.next()
       await assert.rejects(async () => {
-        for await (const _event of session.prompt('First attempt')) void _event
-      }, /Rate limited/)
+        for await (const _ of session.prompt('Second')) void _
+      }, /already running/)
 
-      for await (const _event of session.prompt('Second attempt')) void _event
-
-      const prompt = promptText(model.doStreamCalls[1]?.prompt)
-
-      assert.doesNotMatch(prompt, /First attempt/, 'the failed turn must not be remembered')
-      assert.match(prompt, /Second attempt/)
-    })
-  })
-
-  it('persists each committed turn and restores it into a new session', async () => {
-    await withWorkspace(async (cwd) => {
-      const root = await mkdtemp(join(tmpdir(), 'lefa-session-store-'))
-
-      try {
-        const store = new SessionStore(root)
-        const model = new MockLanguageModelV3({
-          doStream: [textResponse('Two files.')]
-        })
-        const session = new Session(useModel(model), cwd, { store })
-
-        for await (const _event of session.prompt('List the files')) void _event
-
-        const saved = await store.load(session.id)
-
-        assert.equal(saved.meta.cwd, cwd)
-        assert.equal(saved.meta.title, 'List the files', 'the first prompt titles the session')
-        assert.equal(saved.model, 'test/model')
-        assert.equal(saved.messages.length, 2)
-
-        const resumedModel = new MockLanguageModelV3({
-          doStream: [textResponse('The readme.')]
-        })
-        const resumed = new Session(useModel(resumedModel), saved.meta.cwd, {
-          id: saved.meta.id,
-          messages: saved.messages,
-          store
-        })
-
-        for await (const _event of resumed.prompt('Which was first?')) void _event
-
-        const prompt = promptText(resumedModel.doStreamCalls[0]?.prompt)
-
-        assert.equal(resumed.id, session.id)
-        assert.match(prompt, /List the files/, 'the restored session carries prior context')
-        assert.match(prompt, /Two files\./)
-        assert.equal((await store.load(session.id)).messages.length, 4)
-      } finally {
-        await rm(root, { recursive: true, force: true })
-      }
-    })
-  })
-
-  it('writes nothing more once the session is discarded', { timeout: 10_000 }, async () => {
-    await withWorkspace(async (cwd) => {
-      const root = await mkdtemp(join(tmpdir(), 'lefa-discard-'))
-
-      try {
-        const store = new SessionStore(root)
-        const interrupted = openResponse()
-        const model = new MockLanguageModelV3({
-          doStream: [interrupted.response]
-        })
-        const session = new Session(useModel(model), cwd, { store })
-
-        interrupted.push({ type: 'stream-start', warnings: [] })
-        interrupted.push({ type: 'text-start', id: 'text-1' })
-        interrupted.push({
-          type: 'text-delta',
-          id: 'text-1',
-          delta: 'Working'
-        })
-
-        for await (const event of session.prompt('Start something')) {
-          if (event.type !== 'text') continue
-
-          // Stands in for deleting the session while its run is still going.
-          session.discard()
-          interrupted.push({
-            type: 'text-delta',
-            id: 'text-1',
-            delta: ' on it'
-          })
-        }
-
-        assert.deepEqual(await store.list(), [], 'a discarded session must not resurrect its file')
-      } finally {
-        await rm(root, { recursive: true, force: true })
-      }
+      for await (const _ of turn) void _
+      assert.equal(model.doStreamCalls.length, 1)
     })
   })
 
   it('switches model mid-conversation and keeps the history', async () => {
-    await withWorkspace(async (cwd) => {
-      const root = await mkdtemp(join(tmpdir(), 'lefa-session-model-'))
+    await withWorkspace(async (cwd, root) => {
+      const store = new SessionStore(root)
+      const first = new MockLanguageModelV3({ doStream: [textResponse('From the first')] })
+      const second = new MockLanguageModelV3({ doStream: [textResponse('From the second')] })
+      globalThis.AI_SDK_DEFAULT_PROVIDER = customProvider({
+        languageModels: { 'test/first': first, 'test/second': second }
+      })
+      const session = new Session('test/first', cwd, { store })
 
-      try {
-        const store = new SessionStore(root)
-        const first = new MockLanguageModelV3({
-          doStream: [textResponse('From the first model')]
-        })
-        const session = new Session(useModel(first), cwd, { store })
+      await drain(session, 'Start here')
+      session.setModel('test/second')
+      await drain(session, 'And now')
 
-        for await (const _event of session.prompt('Start here')) void _event
-        assert.equal((await store.load(session.id)).model, 'test/model')
-
-        const second = new MockLanguageModelV3({
-          doStream: [textResponse('From the second')]
-        })
-        session.setModel(useModel(second, 'test/second'))
-        assert.equal(session.model, 'test/second')
-
-        for await (const _event of session.prompt('And now')) void _event
-        const saved = await store.load(session.id)
-
-        assert.equal(second.doStreamCalls.length, 1, 'the next turn runs on the new model')
-        assert.equal(saved.model, 'test/second', 'the session resumes on it')
-        assert.equal(saved.messages.length, 4, 'the conversation carries over')
-        assert.match(promptText(second.doStreamCalls[0]?.prompt), /Start here/)
-      } finally {
-        await rm(root, { recursive: true, force: true })
-      }
+      assert.equal(second.doStreamCalls.length, 1, 'the next turn runs on the new model')
+      assert.match(JSON.stringify(second.doStreamCalls[0]?.prompt), /Start here/)
+      assert.equal((await store.load(session.id)).meta.model, 'test/second')
+      assert.deepEqual(session.messages.at(-1)?.metadata, { model: 'test/second' })
     })
   })
 
-  it('records the model with every turn', async () => {
-    await withWorkspace(async (cwd) => {
-      const root = await mkdtemp(join(tmpdir(), 'lefa-session-same-'))
-
-      try {
-        const store = new SessionStore(root)
-        const model = new MockLanguageModelV3({
-          doStream: [textResponse('One'), textResponse('Two')]
-        })
-        const session = new Session(useModel(model), cwd, { store })
-
-        for await (const _event of session.prompt('First')) void _event
-        for await (const _event of session.prompt('Second')) void _event
-
-        const contents = await readFile(join(root, `${session.id}.jsonl`), 'utf8')
-
-        assert.equal(contents.split('"type":"model"').length - 1, 2, 'one record per turn')
-        assert.equal((await store.load(session.id)).model, 'test/model')
-      } finally {
-        await rm(root, { recursive: true, force: true })
-      }
-    })
-  })
-
-  it('reports a failure to save without losing the turn', async () => {
-    await withWorkspace(async (cwd) => {
-      const store = new SessionStore('/dev/null/not-a-directory')
+  it('writes nothing more once the session is discarded', async () => {
+    await withWorkspace(async (cwd, root) => {
+      const store = new SessionStore(root)
       const model = new MockLanguageModelV3({
-        doStream: [textResponse('Done'), textResponse('Still here')]
+        doStream: [textResponse('One'), textResponse('Two')]
       })
       const session = new Session(useModel(model), cwd, { store })
-      const events: AgentEvent[] = []
 
-      for await (const event of session.prompt('Help me')) events.push(event)
+      await drain(session, 'Remember this')
+      session.discard()
+      await drain(session, 'But not this')
 
-      assert.deepEqual(events.at(-1), {
-        type: 'error',
-        message: 'Could not save this session to disk.'
-      })
+      assert.deepEqual((await store.load(session.id)).messages.map(textOf), [
+        'Remember this',
+        'One'
+      ])
+    })
+  })
 
-      for await (const _event of session.prompt('And again')) void _event
+  it('survives a store that cannot be written to', async () => {
+    await withWorkspace(async (cwd) => {
+      const store = new SessionStore('/dev/null/not-a-directory')
+      const model = new MockLanguageModelV3({ doStream: [textResponse('Still fine')] })
+      const session = new Session(useModel(model), cwd, { store })
 
-      assert.match(promptText(model.doStreamCalls[1]?.prompt), /Help me/)
+      const seen = await drain(session, 'Help me')
+
+      assert.equal(textOf(seen.at(-1)), 'Still fine', 'the turn survived the failure to save')
     })
   })
 })

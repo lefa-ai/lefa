@@ -4,7 +4,7 @@
   "private": true,
   "exports": {
     ".": "./src/index.ts",
-    "./events": "./src/events.ts"
+    "./protocol": "./src/protocol.ts"
   },
   "devDependencies": {
     "@types/node": "^24.13.3",

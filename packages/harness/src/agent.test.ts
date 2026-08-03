@@ -5,7 +5,6 @@ import { join } from 'node:path'
 import { describe, it } from 'node:test'
 import { convertArrayToReadableStream, MockLanguageModelV3 } from 'ai/test'
 import { createAgent, createTools } from './agent.ts'
-import { toAgentEvent, type AgentEvent } from './events.ts'
 
 const usage = {
   inputTokens: {
@@ -182,75 +181,6 @@ describe('agent', () => {
         JSON.stringify(model.doGenerateCalls[1]?.prompt),
         /Successfully wrote created\.txt/
       )
-    })
-  })
-
-  it('streams tool activity and text deltas as agent events', async () => {
-    await withWorkspace(async (cwd) => {
-      const model = new MockLanguageModelV3({
-        doStream: [
-          {
-            stream: convertArrayToReadableStream([
-              { type: 'stream-start', warnings: [] },
-              {
-                type: 'tool-call',
-                toolCallId: 'write-1',
-                toolName: 'write',
-                input: JSON.stringify({
-                  path: 'streamed.txt',
-                  content: 'from the stream'
-                })
-              },
-              {
-                type: 'finish',
-                finishReason: { unified: 'tool-calls', raw: undefined },
-                usage
-              }
-            ])
-          },
-          {
-            stream: convertArrayToReadableStream([
-              { type: 'stream-start', warnings: [] },
-              { type: 'text-start', id: 'text-1' },
-              { type: 'text-delta', id: 'text-1', delta: 'File ' },
-              { type: 'text-delta', id: 'text-1', delta: 'created' },
-              { type: 'text-end', id: 'text-1' },
-              {
-                type: 'finish',
-                finishReason: { unified: 'stop', raw: undefined },
-                usage
-              }
-            ])
-          }
-        ]
-      })
-
-      const result = await createAgent(model, cwd).stream({
-        prompt: 'Create the file'
-      })
-      const events: AgentEvent[] = []
-
-      for await (const part of result.stream) {
-        const event = toAgentEvent(part)
-        if (event) events.push(event)
-      }
-
-      assert.deepEqual(events, [
-        {
-          type: 'tool-call',
-          toolCallId: 'write-1',
-          toolName: 'write',
-          input: { path: 'streamed.txt', content: 'from the stream' }
-        },
-        {
-          type: 'tool-result',
-          toolCallId: 'write-1',
-          output: { content: 'Successfully wrote streamed.txt' }
-        },
-        { type: 'text', text: 'File ' },
-        { type: 'text', text: 'created' }
-      ])
-      assert.equal(await readFile(join(cwd, 'streamed.txt'), 'utf8'), 'from the stream')
     })
   })
 })
