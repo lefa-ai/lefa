@@ -20,6 +20,8 @@ export type RunStatus = 'idle' | 'running'
 export type SessionNotification =
   | { type: 'event'; sessionId: string; event: AgentEvent }
   | { type: 'status'; sessionId: string; status: RunStatus }
+  /** The whole queue every time it moves, so a late watcher cannot fall behind. */
+  | { type: 'queued'; sessionId: string; prompts: readonly string[] }
 
 /** Everything needed to draw a session, whether or not a turn is in flight. */
 export interface SessionSnapshot {
@@ -28,6 +30,8 @@ export interface SessionSnapshot {
   model: string
   status: RunStatus
   events: readonly AgentEvent[]
+  /** Prompts waiting for the current turn to finish. Sent, but not yet said. */
+  queued: readonly string[]
 }
 
 /**
