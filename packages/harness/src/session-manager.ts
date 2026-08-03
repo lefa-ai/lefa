@@ -27,6 +27,8 @@ interface Run {
    * once from the buffer.
    */
   baseline: readonly ModelMessage[]
+  /** Prompts to run, in order, once this turn is done. */
+  queue: string[]
 }
 
 function defaultDescribeError(error: unknown): string {
@@ -96,20 +98,41 @@ export class SessionManager {
    * Starts a turn and returns as soon as it is under way.
    *
    * The run outlives this call: it reports itself through notifications, so
-   * nothing has to stay and wait for it.
+   * nothing has to stay and wait for it. A prompt sent into a turn already
+   * running joins the queue rather than being refused — steering an agent
+   * mid-task is the point, and waiting for a stopping place to type is not.
    */
   prompt(sessionId: string, text: string): void {
     const session = this.require(sessionId)
+    const running = this.runs.get(sessionId)
 
-    if (this.runs.has(sessionId)) throw new Error('The session is already running.')
+    if (running) {
+      running.queue.push(text)
+      this.publish({ type: 'queued', sessionId, prompts: [...running.queue] })
 
-    const run: Run = { buffer: [], baseline: session.history }
+      return
+    }
+
+    const run: Run = { buffer: [], baseline: session.history, queue: [] }
     this.runs.set(sessionId, run)
     this.publish({ type: 'status', sessionId, status: 'running' })
     void this.drain(session, run, text)
   }
 
+  /**
+   * Stops the turn in flight and drops whatever was lined up behind it.
+   *
+   * Interrupting means the plan changed, so running the follow-ups written for
+   * the old one would be the opposite of what was asked.
+   */
   abort(sessionId: string): void {
+    const run = this.runs.get(sessionId)
+
+    if (run?.queue.length) {
+      run.queue.length = 0
+      this.publish({ type: 'queued', sessionId, prompts: [] })
+    }
+
     this.sessions.get(sessionId)?.abort()
   }
 
@@ -140,15 +163,36 @@ export class SessionManager {
     }))
   }
 
-  private async drain(session: Session, run: Run, text: string): Promise<void> {
-    // The prompt is echoed by the manager rather than by the caller, so every
-    // watcher sees it and a replayed transcript matches a live one.
-    this.emit(session.id, run, { type: 'prompt', text })
+  /**
+   * Runs the turn, then whatever queued up behind it.
+   *
+   * The session stays running the whole way through: a queue emptying is one
+   * stretch of work, not a series of them blinking idle between turns.
+   */
+  private async drain(session: Session, run: Run, first: string): Promise<void> {
+    let text: string | undefined = first
 
     try {
-      for await (const event of session.prompt(text)) this.emit(session.id, run, event)
-    } catch (error) {
-      this.emit(session.id, run, { type: 'error', message: this.describeError(error) })
+      while (text !== undefined) {
+        // Each turn starts from the conversation the last one left behind.
+        run.baseline = session.history
+        run.buffer = []
+        // The prompt is echoed by the manager rather than by the caller, so
+        // every watcher sees it and a replayed transcript matches a live one.
+        this.emit(session.id, run, { type: 'prompt', text })
+
+        try {
+          for await (const event of session.prompt(text)) this.emit(session.id, run, event)
+        } catch (error) {
+          this.emit(session.id, run, { type: 'error', message: this.describeError(error) })
+        }
+
+        text = run.queue.shift()
+
+        if (text !== undefined) {
+          this.publish({ type: 'queued', sessionId: session.id, prompts: [...run.queue] })
+        }
+      }
     } finally {
       this.runs.delete(session.id)
       this.publish({ type: 'status', sessionId: session.id, status: 'idle' })
@@ -172,7 +216,10 @@ export class SessionManager {
       cwd: session.cwd,
       model: session.model,
       status: run ? 'running' : 'idle',
-      events: run ? [...toAgentEvents(run.baseline), ...run.buffer] : toAgentEvents(session.history)
+      events: run
+        ? [...toAgentEvents(run.baseline), ...run.buffer]
+        : toAgentEvents(session.history),
+      queued: run ? [...run.queue] : []
     }
   }
 
