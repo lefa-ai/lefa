@@ -1,6 +1,7 @@
 import type {
   AgentEvent,
   RunStatus,
+  SessionListing,
   SessionNotification,
   SessionSnapshot
 } from '@lefa/harness/events'
@@ -16,19 +17,11 @@ export const sessionSetModelChannel = 'session:set-model'
 export const modelListChannel = 'models:list'
 export const workspaceChannel = 'workspace:select-directory'
 
-export type { AgentEvent, RunStatus, SessionNotification, SessionSnapshot }
+export type { AgentEvent, RunStatus, SessionListing, SessionNotification, SessionSnapshot }
 
 export interface SessionPromptInput {
   sessionId: string
   prompt: string
-}
-
-export interface SessionSummary {
-  id: string
-  cwd: string
-  createdAt: string
-  updatedAt: string
-  title: string
 }
 
 /** A language model offered by the AI Gateway. */
@@ -47,7 +40,7 @@ export interface LefaApi {
     open: (cwd: string) => Promise<SessionSnapshot>
     prompt: (input: SessionPromptInput) => Promise<void>
     abort: (sessionId: string) => Promise<void>
-    list: () => Promise<readonly SessionSummary[]>
+    list: () => Promise<readonly SessionListing[]>
     attach: (sessionId: string) => Promise<SessionSnapshot>
     delete: (sessionId: string) => Promise<void>
     setModel: (input: SetModelInput) => Promise<void>
