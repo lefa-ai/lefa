@@ -10,6 +10,26 @@ export type AgentEvent =
   | { type: 'aborted' }
   | { type: 'error'; message: string }
 
+export type RunStatus = 'idle' | 'running'
+
+/**
+ * What a watcher hears. Transcript content and run state are separate signals:
+ * an event is something the conversation now contains, a status is what the
+ * session is doing.
+ */
+export type SessionNotification =
+  | { type: 'event'; sessionId: string; event: AgentEvent }
+  | { type: 'status'; sessionId: string; status: RunStatus }
+
+/** Everything needed to draw a session, whether or not a turn is in flight. */
+export interface SessionSnapshot {
+  id: string
+  cwd: string
+  model: string
+  status: RunStatus
+  events: readonly AgentEvent[]
+}
+
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
 }
