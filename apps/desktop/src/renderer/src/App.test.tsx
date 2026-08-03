@@ -39,6 +39,7 @@ function snapshot(overrides: Partial<SessionSnapshot> = {}): SessionSnapshot {
     model: 'anthropic/claude-haiku-4.5',
     status: 'idle',
     events: [],
+    queued: [],
     ...overrides
   }
 }
@@ -384,7 +385,8 @@ describe('App', () => {
       events: [
         { type: 'prompt', text: 'What is here?' },
         { type: 'text', text: 'Two files.' }
-      ]
+      ],
+      queued: []
     })
     const user = userEvent.setup()
     render(<App />)
@@ -417,7 +419,8 @@ describe('App', () => {
       events: [
         { type: 'prompt', text: 'Refactor it' },
         { type: 'text', text: 'Working on ' }
-      ]
+      ],
+      queued: []
     })
     const user = userEvent.setup()
     render(<App />)
@@ -461,7 +464,8 @@ describe('App', () => {
         cwd: '/tmp/busy',
         model: 'openai/gpt-5.1-codex',
         status: 'running',
-        events: [{ type: 'text', text: 'Reading the' }]
+        events: [{ type: 'text', text: 'Reading the' }],
+        queued: []
       })
       await attaching.promise
       for (const listener of listeners) {
@@ -531,6 +535,76 @@ describe('App', () => {
     finished('session-9')
 
     await waitFor(() => expect(screen.queryByRole('status', { name: 'Working' })).toBeNull())
+  })
+
+  it('sends a follow-up into a turn already running instead of making you wait', async () => {
+    const user = await openWorkspace()
+
+    await start(user, 'start the work')
+
+    // Still working, and the composer is still open for business.
+    expect(screen.getByRole('button', { name: 'Stop' })).toBeTruthy()
+    const queueButton = screen.getByRole('button', { name: 'Queue' })
+    expect((queueButton as HTMLButtonElement).disabled).toBe(true)
+
+    await user.type(screen.getByLabelText('Prompt'), 'then run the tests')
+    await user.click(screen.getByRole('button', { name: 'Queue' }))
+
+    expect(promptSession).toHaveBeenLastCalledWith({
+      sessionId: 'session-1',
+      prompt: 'then run the tests'
+    })
+    expect((screen.getByLabelText('Prompt') as HTMLTextAreaElement).value).toBe('')
+
+    notify({ type: 'queued', sessionId: 'session-1', prompts: ['then run the tests'] })
+    await screen.findByText('Queued')
+    expect(screen.getByText('then run the tests')).toBeTruthy()
+
+    // The queued turn starts: it leaves the queue and joins the transcript.
+    notify({ type: 'queued', sessionId: 'session-1', prompts: [] })
+    emit({ type: 'prompt', text: 'then run the tests' })
+
+    await waitFor(() => expect(screen.queryByText('Queued')).toBeNull())
+    expect(screen.getByText('then run the tests')).toBeTruthy()
+  })
+
+  it('shows what is already queued when attaching mid-turn', async () => {
+    listSessions.mockResolvedValue([
+      {
+        id: 'session-7',
+        cwd: '/tmp/busy',
+        createdAt: '2026-08-01T10:00:00.000Z',
+        updatedAt: new Date().toISOString(),
+        title: 'Backed up',
+        status: 'running'
+      }
+    ])
+    attachSession.mockResolvedValue({
+      id: 'session-7',
+      cwd: '/tmp/busy',
+      model: 'openai/gpt-5.1-codex',
+      status: 'running',
+      events: [{ type: 'prompt', text: 'the first thing' }],
+      queued: ['the second thing', 'the third thing']
+    })
+    const user = userEvent.setup()
+    render(<App />)
+
+    await user.click(await screen.findByText('Backed up'))
+
+    await screen.findByText('Queued')
+    expect(screen.getByText('the second thing')).toBeTruthy()
+    expect(screen.getByText('the third thing')).toBeTruthy()
+  })
+
+  it('ignores a queue belonging to a session that is not on screen', async () => {
+    const user = await openWorkspace()
+    await start(user, 'start the work')
+
+    notify({ type: 'queued', sessionId: 'session-9', prompts: ['not ours'] })
+
+    expect(screen.queryByText('Queued')).toBeNull()
+    expect(screen.queryByText('not ours')).toBeNull()
   })
 
   it('refreshes the session list when a run finishes', async () => {
