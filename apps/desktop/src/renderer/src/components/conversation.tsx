@@ -51,11 +51,24 @@ function Turn({
   }
 }
 
+/** Said, but not yet asked: it goes to the model when the turn in flight ends. */
+function Queued({ text }: { text: string }): React.JSX.Element {
+  return (
+    <Message align="end">
+      <Bubble variant="secondary" align="end" className="opacity-50">
+        <BubbleContent className="whitespace-pre-wrap">{text}</BubbleContent>
+      </Bubble>
+    </Message>
+  )
+}
+
 export function Conversation({
   items,
+  queued,
   isRunning
 }: {
   items: readonly TranscriptItem[]
+  queued: readonly string[]
   isRunning: boolean
 }): React.JSX.Element {
   return (
@@ -66,6 +79,12 @@ export function Conversation({
             {items.map((item, index) => (
               <MessageScrollerItem key={item.kind === 'tool' ? item.toolCallId : index}>
                 <Turn item={item} isStreaming={isRunning && index === items.length - 1} />
+              </MessageScrollerItem>
+            ))}
+            {queued.length > 0 && <Marker variant="separator">Queued</Marker>}
+            {queued.map((text, index) => (
+              <MessageScrollerItem key={`queued-${index}`}>
+                <Queued text={text} />
               </MessageScrollerItem>
             ))}
           </MessageScrollerContent>
