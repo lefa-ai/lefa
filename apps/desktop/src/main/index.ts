@@ -15,7 +15,7 @@ import {
   type SessionNotification,
   type SessionPromptInput,
   type SessionSnapshot,
-  type SessionSummary,
+  type SessionListing,
   type SetModelInput
 } from '../shared/api'
 import { sessionManager } from './agent'
@@ -49,7 +49,7 @@ function registerIpcHandlers(): void {
     sessionManager.abort(sessionId)
   })
 
-  ipcMain.handle(sessionListChannel, (): Promise<SessionSummary[]> => sessionManager.list())
+  ipcMain.handle(sessionListChannel, (): Promise<SessionListing[]> => sessionManager.list())
 
   ipcMain.handle(sessionAttachChannel, (_event, sessionId: string): Promise<SessionSnapshot> =>
     sessionManager.attach(sessionId)
