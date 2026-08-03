@@ -15,7 +15,7 @@ import {
   type SessionNotification,
   type SessionPromptInput,
   type SessionSnapshot,
-  type SessionSummary,
+  type SessionListing,
   type SetModelInput
 } from '../shared/api'
 
@@ -41,7 +41,7 @@ const api = {
     open: (cwd: string) => invoke<SessionSnapshot>(sessionOpenChannel, cwd),
     prompt: (input: SessionPromptInput) => invoke<void>(sessionPromptChannel, input),
     abort: (sessionId: string) => invoke<void>(sessionAbortChannel, sessionId),
-    list: () => invoke<readonly SessionSummary[]>(sessionListChannel),
+    list: () => invoke<readonly SessionListing[]>(sessionListChannel),
     attach: (sessionId: string) => invoke<SessionSnapshot>(sessionAttachChannel, sessionId),
     delete: (sessionId: string) => invoke<void>(sessionDeleteChannel, sessionId),
     setModel: (input: SetModelInput) => invoke<void>(sessionSetModelChannel, input),
