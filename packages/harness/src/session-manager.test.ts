@@ -111,7 +111,8 @@ interface Harness {
   manager: SessionManager
   heard: SessionNotification[]
   events: (sessionId: string) => unknown[]
-  idle: (sessionId: string) => Promise<void>
+  /** Waits for the session's `times`-th finished turn, not just any past one. */
+  idle: (sessionId: string, times?: number) => Promise<void>
 }
 
 async function withManager(
@@ -138,16 +139,16 @@ async function withManager(
             (notification) => notification.type === 'event' && notification.sessionId === sessionId
           )
           .map((notification) => (notification as { event: unknown }).event),
-      idle: (sessionId) =>
+      idle: (sessionId, times = 1) =>
         waitFor(
           () =>
-            heard.some(
+            heard.filter(
               (notification) =>
                 notification.type === 'status' &&
                 notification.sessionId === sessionId &&
                 notification.status === 'idle'
-            ),
-          `session ${sessionId} to go idle`
+            ).length >= times,
+          `session ${sessionId} to finish ${times} turn(s)`
         )
     })
   } finally {
@@ -454,8 +455,42 @@ describe('session manager', () => {
         { type: 'text', text: 'Two files.' }
       ])
       assert.deepEqual(
-        (await reopened.list()).map((summary) => summary.title),
-        ['List the files']
+        (await reopened.list()).map((listing) => [listing.title, listing.status]),
+        [['List the files', 'idle']]
+      )
+    })
+  })
+
+  it('says which of the saved sessions are working', async () => {
+    await withManager(async ({ cwd, manager, idle }) => {
+      const second = openResponse()
+      const model = new MockLanguageModelV3({
+        doStream: [textResponse('Done'), textResponse('Done'), second.response]
+      })
+      const quiet = manager.open(cwd, useModel(model))
+      const busy = manager.open(cwd, 'test/model')
+
+      // Both need a saved turn before the store knows about them at all.
+      manager.prompt(quiet.id, 'Finish quickly')
+      await idle(quiet.id)
+      manager.prompt(busy.id, 'Finish quickly')
+      await idle(busy.id)
+
+      manager.prompt(busy.id, 'Now take a while')
+      const listed = await manager.list()
+
+      assert.deepEqual(Object.fromEntries(listed.map((listing) => [listing.id, listing.status])), {
+        [quiet.id]: 'idle',
+        [busy.id]: 'running'
+      })
+
+      second.push({ type: 'stream-start', warnings: [] })
+      second.finish()
+      await idle(busy.id, 2)
+
+      assert.ok(
+        (await manager.list()).every((listing) => listing.status === 'idle'),
+        'a finished run leaves nothing marked as working'
       )
     })
   })
