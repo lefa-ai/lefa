@@ -433,6 +433,65 @@ describe('App', () => {
     await screen.findByRole('button', { name: 'Run' })
   })
 
+  it('keeps the deltas that land in the frame it takes to switch sessions', async () => {
+    listSessions.mockResolvedValue([
+      {
+        id: 'session-7',
+        cwd: '/tmp/busy',
+        createdAt: '2026-08-01T10:00:00.000Z',
+        updatedAt: new Date().toISOString(),
+        title: 'Mid-sentence'
+      }
+    ])
+    const attaching = deferred<SessionSnapshot>()
+    attachSession.mockReturnValue(attaching.promise)
+    const user = userEvent.setup()
+    render(<App />)
+
+    await user.click(await screen.findByText('Mid-sentence'))
+
+    // The snapshot lands and the run's next delta follows immediately behind it,
+    // before React has had a chance to redraw.
+    await act(async () => {
+      attaching.resolve({
+        id: 'session-7',
+        cwd: '/tmp/busy',
+        model: 'openai/gpt-5.1-codex',
+        status: 'running',
+        events: [{ type: 'text', text: 'Reading the' }]
+      })
+      await attaching.promise
+      for (const listener of listeners) {
+        listener({
+          type: 'event',
+          sessionId: 'session-7',
+          event: { type: 'text', text: ' file now.' }
+        })
+      }
+    })
+
+    expect(screen.getByText('Reading the file now.')).toBeTruthy()
+  })
+
+  it('listens once, however many sessions it moves between', async () => {
+    listSessions.mockResolvedValue([
+      {
+        id: 'session-7',
+        cwd: '/tmp/other',
+        createdAt: '2026-08-01T10:00:00.000Z',
+        updatedAt: new Date().toISOString(),
+        title: 'Elsewhere'
+      }
+    ])
+    attachSession.mockResolvedValue(snapshot({ id: 'session-7', cwd: '/tmp/other' }))
+    const user = await openWorkspace()
+
+    await user.click(await screen.findByText('Elsewhere'))
+    await screen.findByText('/tmp/other')
+
+    expect(listeners).toHaveLength(1)
+  })
+
   it('refreshes the session list when a run finishes', async () => {
     const user = await openWorkspace()
     await start(user, 'do something')
