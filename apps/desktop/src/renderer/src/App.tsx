@@ -1,5 +1,5 @@
 import { SquareIcon } from 'lucide-react'
-import { useCallback, useEffect, useState, type FormEvent, type KeyboardEvent } from 'react'
+import { useCallback, useEffect, useRef, useState, type FormEvent, type KeyboardEvent } from 'react'
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
 import type { RunStatus, SessionSnapshot, SessionSummary } from '../../shared/api'
@@ -19,6 +19,14 @@ function App(): React.JSX.Element {
   const [status, setStatus] = useState<RunStatus>('idle')
   const [error, setError] = useState<string | null>(null)
   const isRunning = status === 'running'
+  /**
+   * The session on screen, as of right now rather than as of the last render.
+   *
+   * A run keeps streaming through the frame it takes React to redraw a switch,
+   * and state read from a listener would still name the session we just left —
+   * so every one of those events would be dropped mid-sentence.
+   */
+  const watching = useRef<string | null>(null)
 
   const refreshSessions = useCallback(async (): Promise<void> => {
     try {
@@ -46,11 +54,14 @@ function App(): React.JSX.Element {
     }
   }, [])
 
+  // Subscribed once for the life of the window: what changes is which session
+  // the notifications are about, and that is what the ref is for.
   useEffect(
     () =>
       window.lefa.session.onNotify((notification) => {
         // Ignore a session that is no longer on screen while its run continues.
-        if (notification.sessionId !== sessionId) return
+        // Attaching to it again brings back everything missed in the meantime.
+        if (notification.sessionId !== watching.current) return
 
         if (notification.type === 'status') {
           setStatus(notification.status)
@@ -63,10 +74,12 @@ function App(): React.JSX.Element {
         if (notification.event.type === 'error') setError(notification.event.message)
         else setItems((current) => reduceTranscript(current, notification.event))
       }),
-    [sessionId, refreshSessions]
+    [refreshSessions]
   )
 
   const showSession = (snapshot: SessionSnapshot): void => {
+    // The ref moves first: the next event may arrive before React redraws.
+    watching.current = snapshot.id
     setSessionId(snapshot.id)
     setModel(snapshot.model)
     setWorkspacePath(snapshot.cwd)
@@ -107,6 +120,7 @@ function App(): React.JSX.Element {
       await window.lefa.session.delete(id)
 
       if (id === sessionId) {
+        watching.current = null
         setSessionId(null)
         setModel(null)
         setWorkspacePath(null)
