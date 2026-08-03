@@ -2,7 +2,7 @@ import { SquareIcon } from 'lucide-react'
 import { useCallback, useEffect, useState, type FormEvent, type KeyboardEvent } from 'react'
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
-import type { SessionSummary } from '../../shared/api'
+import type { RunStatus, SessionSnapshot, SessionSummary } from '../../shared/api'
 import { Conversation } from './components/conversation'
 import { ModelPicker } from './components/model-picker'
 import { SessionList } from './components/session-list'
@@ -16,8 +16,9 @@ function App(): React.JSX.Element {
   const [prompt, setPrompt] = useState('')
   const [items, setItems] = useState<readonly TranscriptItem[]>([])
   const [isSelecting, setIsSelecting] = useState(false)
-  const [isRunning, setIsRunning] = useState(false)
+  const [status, setStatus] = useState<RunStatus>('idle')
   const [error, setError] = useState<string | null>(null)
+  const isRunning = status === 'running'
 
   const refreshSessions = useCallback(async (): Promise<void> => {
     try {
@@ -47,15 +48,31 @@ function App(): React.JSX.Element {
 
   useEffect(
     () =>
-      window.lefa.session.onEvent(({ sessionId: eventSessionId, event }) => {
-        // Ignore a session that is no longer on screen while its run drains.
-        if (eventSessionId !== sessionId) return
+      window.lefa.session.onNotify((notification) => {
+        // Ignore a session that is no longer on screen while its run continues.
+        if (notification.sessionId !== sessionId) return
 
-        if (event.type === 'error') setError(event.message)
-        else setItems((current) => reduceTranscript(current, event))
+        if (notification.type === 'status') {
+          setStatus(notification.status)
+          // A finished turn is a turn worth listing.
+          if (notification.status === 'idle') void refreshSessions()
+
+          return
+        }
+
+        if (notification.event.type === 'error') setError(notification.event.message)
+        else setItems((current) => reduceTranscript(current, notification.event))
       }),
-    [sessionId]
+    [sessionId, refreshSessions]
   )
+
+  const showSession = (snapshot: SessionSnapshot): void => {
+    setSessionId(snapshot.id)
+    setModel(snapshot.model)
+    setWorkspacePath(snapshot.cwd)
+    setItems(buildTranscript(snapshot.events))
+    setStatus(snapshot.status)
+  }
 
   const createSession = async (): Promise<void> => {
     setIsSelecting(true)
@@ -64,14 +81,7 @@ function App(): React.JSX.Element {
     try {
       const path = await window.lefa.workspace.selectDirectory()
 
-      if (path) {
-        const opened = await window.lefa.session.open(path)
-
-        setSessionId(opened.id)
-        setModel(opened.model)
-        setWorkspacePath(path)
-        setItems([])
-      }
+      if (path) showSession(await window.lefa.session.open(path))
     } catch {
       setError('Unable to open the folder picker.')
     } finally {
@@ -84,12 +94,7 @@ function App(): React.JSX.Element {
     setError(null)
 
     try {
-      const restored = await window.lefa.session.resume(id)
-
-      setSessionId(restored.id)
-      setModel(restored.model)
-      setWorkspacePath(restored.cwd)
-      setItems(buildTranscript(restored.events))
+      showSession(await window.lefa.session.attach(id))
     } catch {
       setError('Unable to open that session.')
     }
@@ -106,6 +111,7 @@ function App(): React.JSX.Element {
         setModel(null)
         setWorkspacePath(null)
         setItems([])
+        setStatus('idle')
       }
 
       await refreshSessions()
@@ -120,12 +126,11 @@ function App(): React.JSX.Element {
     const text = prompt.trim()
     if (!sessionId || !text || isRunning) return
 
-    setIsRunning(true)
-    setItems((current) => reduceTranscript(current, { type: 'prompt', text }))
     setPrompt('')
     setError(null)
 
     try {
+      // The prompt itself comes back as an event, so every watcher sees it.
       await window.lefa.session.prompt({ sessionId, prompt: text })
     } catch (failure) {
       // Provider failures carry the only useful detail — a missing key, an
@@ -133,9 +138,6 @@ function App(): React.JSX.Element {
       const message = failure instanceof Error ? failure.message.trim() : ''
 
       setError(message || 'Unable to run the agent.')
-    } finally {
-      setIsRunning(false)
-      await refreshSessions()
     }
   }
 
