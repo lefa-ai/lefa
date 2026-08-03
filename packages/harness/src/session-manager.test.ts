@@ -241,7 +241,9 @@ describe('session manager', () => {
 
   it('does not show the turn twice while it is being saved', async () => {
     await withManager(async ({ cwd, manager, store, idle }) => {
-      const model = new MockLanguageModelV3({ doStream: [textResponse('Saved soon.')] })
+      const model = new MockLanguageModelV3({
+        doStream: [textResponse('Saved soon.')]
+      })
       const { id } = manager.open(cwd, useModel(model))
 
       // The session commits the turn to its history and only then writes it, so
@@ -290,7 +292,9 @@ describe('session manager', () => {
 
   it('stops telling a watcher that has unsubscribed', async () => {
     await withManager(async ({ cwd, manager, idle }) => {
-      const model = new MockLanguageModelV3({ doStream: [textResponse('One')] })
+      const model = new MockLanguageModelV3({
+        doStream: [textResponse('One')]
+      })
       const { id } = manager.open(cwd, useModel(model))
       const seen: SessionNotification[] = []
       const stop = manager.subscribe((notification) => seen.push(notification))
@@ -319,7 +323,11 @@ describe('session manager', () => {
           sessionId: id,
           event: { type: 'error', message: 'No key. Set one.' }
         })
-        assert.deepEqual(heard.at(-1), { type: 'status', sessionId: id, status: 'idle' })
+        assert.deepEqual(heard.at(-1), {
+          type: 'status',
+          sessionId: id,
+          status: 'idle'
+        })
         assert.equal((await manager.attach(id)).status, 'idle')
       },
       { describeError: () => 'No key. Set one.' }
@@ -344,18 +352,104 @@ describe('session manager', () => {
     })
   })
 
-  it('refuses to start a second turn while one is running', async () => {
-    await withManager(async ({ cwd, manager, idle }) => {
+  it('queues a prompt sent into a turn already running, and runs it next', async () => {
+    await withManager(async ({ cwd, manager, heard, events, idle }) => {
       const turn = openResponse()
-      const model = new MockLanguageModelV3({ doStream: [turn.response] })
+      const model = new MockLanguageModelV3({
+        doStream: [turn.response, textResponse('On it.'), textResponse('That too.')]
+      })
       const { id } = manager.open(cwd, useModel(model))
 
-      manager.prompt(id, 'First')
-      assert.throws(() => manager.prompt(id, 'Second'), /already running/)
+      manager.prompt(id, 'Start')
+      manager.prompt(id, 'Also do this')
+      manager.prompt(id, 'And this')
+
+      assert.deepEqual(heard.at(-1), {
+        type: 'queued',
+        sessionId: id,
+        prompts: ['Also do this', 'And this']
+      })
+      assert.deepEqual((await manager.attach(id)).queued, ['Also do this', 'And this'])
 
       turn.push({ type: 'stream-start', warnings: [] })
       turn.finish()
       await idle(id)
+
+      // One stretch of work: the session never blinks idle between turns.
+      assert.deepEqual(
+        heard.filter((n) => n.type === 'status').map((n) => n.status),
+        ['running', 'idle']
+      )
+      assert.deepEqual(
+        events(id).filter((event) => (event as { type: string }).type === 'prompt'),
+        [
+          { type: 'prompt', text: 'Start' },
+          { type: 'prompt', text: 'Also do this' },
+          { type: 'prompt', text: 'And this' }
+        ]
+      )
+      assert.equal(model.doStreamCalls.length, 3, 'every queued prompt ran')
+      assert.deepEqual((await manager.attach(id)).queued, [])
+    })
+  })
+
+  it('shows a queued prompt to a watcher that arrives mid-turn', async () => {
+    await withManager(async ({ cwd, manager, events, idle }) => {
+      const turn = openResponse()
+      const model = new MockLanguageModelV3({
+        doStream: [turn.response, textResponse('Next.')]
+      })
+      const { id } = manager.open(cwd, useModel(model))
+
+      manager.prompt(id, 'Start')
+      turn.push({ type: 'stream-start', warnings: [] })
+      turn.push({ type: 'text-start', id: 'text-1' })
+      turn.push({ type: 'text-delta', id: 'text-1', delta: 'Working' })
+      manager.prompt(id, 'Then this')
+      await waitFor(() => events(id).length === 2, 'the turn to start speaking')
+
+      const attached = await manager.attach(id)
+
+      assert.equal(attached.status, 'running')
+      assert.deepEqual(attached.queued, ['Then this'])
+      assert.deepEqual(attached.events, [
+        { type: 'prompt', text: 'Start' },
+        { type: 'text', text: 'Working' }
+      ])
+
+      turn.push({ type: 'text-end', id: 'text-1' })
+      turn.finish()
+      await idle(id)
+    })
+  })
+
+  it('drops the queue when the turn it was written for is interrupted', async () => {
+    await withManager(async ({ cwd, manager, heard, events, idle }) => {
+      const turn = openResponse()
+      const model = new MockLanguageModelV3({
+        doStream: [turn.response, textResponse('Unused')]
+      })
+      const { id } = manager.open(cwd, useModel(model))
+
+      manager.prompt(id, 'Take a while')
+      turn.push({ type: 'stream-start', warnings: [] })
+      turn.push({ type: 'text-start', id: 'text-1' })
+      turn.push({ type: 'text-delta', id: 'text-1', delta: 'Still working' })
+      manager.prompt(id, 'Follow up on that')
+      await waitFor(() => events(id).length === 2, 'the turn to start speaking')
+
+      manager.abort(id)
+      // Wake the reader so the abort is observed and the stream closes.
+      turn.push({ type: 'text-delta', id: 'text-1', delta: ' on it' })
+      await idle(id)
+
+      assert.deepEqual(heard.at(-2), {
+        type: 'event',
+        sessionId: id,
+        event: { type: 'aborted' }
+      })
+      assert.equal(model.doStreamCalls.length, 1, 'the follow-up was written for a plan that ended')
+      assert.deepEqual((await manager.attach(id)).queued, [])
     })
   })
 
@@ -437,7 +531,9 @@ describe('session manager', () => {
 
   it('loads a session from disk and lists what is saved', async () => {
     await withManager(async ({ cwd, store, manager, idle }) => {
-      const model = new MockLanguageModelV3({ doStream: [textResponse('Two files.')] })
+      const model = new MockLanguageModelV3({
+        doStream: [textResponse('Two files.')]
+      })
       const { id } = manager.open(cwd, useModel(model))
 
       manager.prompt(id, 'List the files')
@@ -497,7 +593,9 @@ describe('session manager', () => {
 
   it('stops a session and removes it for good', async () => {
     await withManager(async ({ cwd, manager, idle }) => {
-      const model = new MockLanguageModelV3({ doStream: [textResponse('Gone soon')] })
+      const model = new MockLanguageModelV3({
+        doStream: [textResponse('Gone soon')]
+      })
       const { id } = manager.open(cwd, useModel(model))
 
       manager.prompt(id, 'Something')
