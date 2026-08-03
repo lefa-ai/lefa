@@ -52,34 +52,44 @@ describe('preload bridge', () => {
     await expect(api.session.list()).resolves.toEqual([])
     expect(electron.invoke).toHaveBeenCalledWith('session:list')
 
-    const restored = { id: 'session-1', cwd: '/tmp/workspace', events: [] }
-    electron.invoke.mockResolvedValueOnce(restored)
-    await expect(api.session.resume('session-1')).resolves.toEqual(restored)
-    expect(electron.invoke).toHaveBeenCalledWith('session:resume', 'session-1')
+    const attached = {
+      id: 'session-1',
+      cwd: '/tmp/workspace',
+      model: 'anthropic/claude-haiku-4.5',
+      status: 'running' as const,
+      events: []
+    }
+    electron.invoke.mockResolvedValueOnce(attached)
+    await expect(api.session.attach('session-1')).resolves.toEqual(attached)
+    expect(electron.invoke).toHaveBeenCalledWith('session:attach', 'session-1')
 
     electron.invoke.mockResolvedValueOnce(undefined)
     await expect(api.session.delete('session-1')).resolves.toBeUndefined()
     expect(electron.invoke).toHaveBeenCalledWith('session:delete', 'session-1')
   })
 
-  it('forwards session events to the listener and unsubscribes on cleanup', () => {
+  it('forwards session notifications to the listener and unsubscribes on cleanup', () => {
     const api = exposedApi()
     const listener = vi.fn()
 
-    const unsubscribe = api.session.onEvent(listener)
+    const unsubscribe = api.session.onNotify(listener)
     const [channel, handler] = electron.on.mock.calls[0] as [
       string,
-      (event: unknown, sessionEvent: unknown) => void
+      (event: unknown, notification: unknown) => void
     ]
 
-    expect(channel).toBe('session:event')
+    expect(channel).toBe('session:notify')
 
-    const sessionEvent = { sessionId: 'session-1', event: { type: 'text', text: 'Hello' } }
-    handler({ senderId: 1 }, sessionEvent)
-    expect(listener).toHaveBeenCalledWith(sessionEvent)
+    for (const notification of [
+      { type: 'event', sessionId: 'session-1', event: { type: 'text', text: 'Hello' } },
+      { type: 'status', sessionId: 'session-1', status: 'idle' }
+    ]) {
+      handler({ senderId: 1 }, notification)
+      expect(listener).toHaveBeenCalledWith(notification)
+    }
 
     unsubscribe()
-    expect(electron.off).toHaveBeenCalledWith('session:event', handler)
+    expect(electron.off).toHaveBeenCalledWith('session:notify', handler)
   })
 
   it('exposes workspace selection through the expected IPC channel', async () => {
