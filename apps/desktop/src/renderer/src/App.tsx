@@ -16,6 +16,7 @@ function App(): React.JSX.Element {
   const [prompt, setPrompt] = useState('')
   const [items, setItems] = useState<readonly TranscriptItem[]>([])
   const [isSelecting, setIsSelecting] = useState(false)
+  const [queued, setQueued] = useState<readonly string[]>([])
   const [status, setStatus] = useState<RunStatus>('idle')
   const [error, setError] = useState<string | null>(null)
   const isRunning = status === 'running'
@@ -77,6 +78,12 @@ function App(): React.JSX.Element {
           return
         }
 
+        if (notification.type === 'queued') {
+          if (notification.sessionId === watching.current) setQueued(notification.prompts)
+
+          return
+        }
+
         // A transcript, though, is only drawn for the session on screen.
         // Attaching to any other brings back everything missed in the meantime.
         if (notification.sessionId !== watching.current) return
@@ -94,6 +101,7 @@ function App(): React.JSX.Element {
     setModel(snapshot.model)
     setWorkspacePath(snapshot.cwd)
     setItems(buildTranscript(snapshot.events))
+    setQueued(snapshot.queued)
     setStatus(snapshot.status)
   }
 
@@ -135,6 +143,7 @@ function App(): React.JSX.Element {
         setModel(null)
         setWorkspacePath(null)
         setItems([])
+        setQueued([])
         setStatus('idle')
       }
 
@@ -148,7 +157,9 @@ function App(): React.JSX.Element {
     event.preventDefault()
 
     const text = prompt.trim()
-    if (!sessionId || !text || isRunning) return
+    // Sending into a turn already running queues it, so there is no reason to
+    // make anyone wait for a stopping place before typing.
+    if (!sessionId || !text) return
 
     setPrompt('')
     setError(null)
@@ -219,7 +230,7 @@ function App(): React.JSX.Element {
         {sessionId ? (
           <>
             <div className="min-h-0 flex-1">
-              <Conversation items={items} isRunning={isRunning} />
+              <Conversation items={items} queued={queued} isRunning={isRunning} />
             </div>
 
             <div className="shrink-0 px-6 pb-6">
@@ -227,7 +238,11 @@ function App(): React.JSX.Element {
                 <div className="rounded-xl border border-border bg-card p-2 focus-within:border-ring">
                   <Textarea
                     aria-label="Prompt"
-                    placeholder="Ask Lefa to work in this folder"
+                    placeholder={
+                      isRunning
+                        ? 'Send a follow-up — it runs after this turn'
+                        : 'Ask Lefa to work in this folder'
+                    }
                     value={prompt}
                     rows={2}
                     onChange={(event) => setPrompt(event.target.value)}
@@ -236,16 +251,17 @@ function App(): React.JSX.Element {
                   />
                   <div className="flex items-center justify-between gap-2 px-1 pb-1">
                     {model && <ModelPicker model={model} onChange={changeModel} />}
-                    {isRunning ? (
-                      <Button type="button" size="sm" variant="secondary" onClick={stopAgent}>
-                        <SquareIcon />
-                        Stop
-                      </Button>
-                    ) : (
+                    <div className="flex items-center gap-2">
+                      {isRunning && (
+                        <Button type="button" size="sm" variant="secondary" onClick={stopAgent}>
+                          <SquareIcon />
+                          Stop
+                        </Button>
+                      )}
                       <Button type="submit" size="sm" disabled={!prompt.trim()}>
-                        Run
+                        {isRunning ? 'Queue' : 'Run'}
                       </Button>
-                    )}
+                    </div>
                   </div>
                 </div>
               </form>
