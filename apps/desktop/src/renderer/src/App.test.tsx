@@ -3,7 +3,12 @@
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import type { AgentEvent, RestoredSession, SessionEvent, SessionSummary } from '../../shared/api'
+import type {
+  AgentEvent,
+  SessionNotification,
+  SessionSnapshot,
+  SessionSummary
+} from '../../shared/api'
 import App from './App'
 
 // Streamdown highlights through Shiki asynchronously, which is slow and flaky
@@ -27,26 +32,47 @@ function deferred<T>() {
   return { promise, resolve, reject }
 }
 
+function snapshot(overrides: Partial<SessionSnapshot> = {}): SessionSnapshot {
+  return {
+    id: 'session-1',
+    cwd: '/tmp/workspace',
+    model: 'anthropic/claude-haiku-4.5',
+    status: 'idle',
+    events: [],
+    ...overrides
+  }
+}
+
 const selectDirectory = vi.fn<() => Promise<string | null>>()
-const openSession = vi.fn<(cwd: string) => Promise<{ id: string; model: string }>>()
+const openSession = vi.fn<(cwd: string) => Promise<SessionSnapshot>>()
 const setSessionModel = vi.fn<(input: { sessionId: string; model: string }) => Promise<void>>()
 const listModels = vi.fn<() => Promise<readonly { id: string; name: string }[]>>()
 const promptSession = vi.fn<(input: { sessionId: string; prompt: string }) => Promise<void>>()
 const abortSession = vi.fn<(sessionId: string) => Promise<void>>()
 const listSessions = vi.fn<() => Promise<readonly SessionSummary[]>>()
-const resumeSession = vi.fn<(sessionId: string) => Promise<RestoredSession>>()
+const attachSession = vi.fn<(sessionId: string) => Promise<SessionSnapshot>>()
 const deleteSession = vi.fn<(sessionId: string) => Promise<void>>()
 const unsubscribe = vi.fn()
-let listeners: Array<(event: SessionEvent) => void> = []
+let listeners: Array<(notification: SessionNotification) => void> = []
+
+function notify(...notifications: SessionNotification[]): void {
+  act(() => {
+    for (const notification of notifications) {
+      for (const listener of listeners) listener(notification)
+    }
+  })
+}
 
 function emit(...events: AgentEvent[]): void {
   emitFrom('session-1', ...events)
 }
 
 function emitFrom(sessionId: string, ...events: AgentEvent[]): void {
-  act(() => {
-    for (const event of events) for (const listener of listeners) listener({ sessionId, event })
-  })
+  notify(...events.map((event) => ({ type: 'event' as const, sessionId, event })))
+}
+
+function finished(sessionId = 'session-1'): void {
+  notify({ type: 'status', sessionId, status: 'idle' })
 }
 
 async function openWorkspace(path = '/tmp/workspace'): Promise<ReturnType<typeof userEvent.setup>> {
@@ -64,10 +90,23 @@ async function run(user: ReturnType<typeof userEvent.setup>, text: string): Prom
   await user.click(screen.getByRole('button', { name: 'Run' }))
 }
 
+/** Types a prompt, then plays back what main sends once the run is under way. */
+async function start(
+  user: ReturnType<typeof userEvent.setup>,
+  text: string,
+  sessionId = 'session-1'
+): Promise<void> {
+  await run(user, text)
+  notify(
+    { type: 'status', sessionId, status: 'running' },
+    { type: 'event', sessionId, event: { type: 'prompt', text: text.trim() } }
+  )
+}
+
 beforeEach(() => {
   selectDirectory.mockReset()
   openSession.mockReset()
-  openSession.mockResolvedValue({ id: 'session-1', model: 'anthropic/claude-haiku-4.5' })
+  openSession.mockImplementation(async (cwd) => snapshot({ cwd }))
   setSessionModel.mockReset()
   setSessionModel.mockResolvedValue(undefined)
   listModels.mockReset()
@@ -81,7 +120,7 @@ beforeEach(() => {
   abortSession.mockResolvedValue(undefined)
   listSessions.mockReset()
   listSessions.mockResolvedValue([])
-  resumeSession.mockReset()
+  attachSession.mockReset()
   deleteSession.mockReset()
   deleteSession.mockResolvedValue(undefined)
   unsubscribe.mockReset()
@@ -94,10 +133,10 @@ beforeEach(() => {
         prompt: promptSession,
         abort: abortSession,
         list: listSessions,
-        resume: resumeSession,
+        attach: attachSession,
         setModel: setSessionModel,
         delete: deleteSession,
-        onEvent: (listener: (event: SessionEvent) => void) => {
+        onNotify: (listener: (notification: SessionNotification) => void) => {
           listeners.push(listener)
 
           return () => {
@@ -166,11 +205,9 @@ describe('App', () => {
   })
 
   it('echoes the prompt and renders streamed activity while the run is in flight', async () => {
-    const inFlight = deferred<void>()
-    promptSession.mockReturnValue(inFlight.promise)
     const user = await openWorkspace()
 
-    await run(user, '  list the files  ')
+    await start(user, '  list the files  ')
 
     expect(promptSession).toHaveBeenCalledWith({
       sessionId: 'session-1',
@@ -197,16 +234,14 @@ describe('App', () => {
     await screen.findByText('README.md')
     expect(toolStatus('bash')).toBe('done')
 
-    inFlight.resolve()
+    finished()
     await screen.findByRole('button', { name: 'Run' })
   })
 
   it('stops a running turn and settles the transcript', async () => {
-    const inFlight = deferred<void>()
-    promptSession.mockReturnValue(inFlight.promise)
     const user = await openWorkspace()
 
-    await run(user, 'take a while')
+    await start(user, 'take a while')
     emit({ type: 'tool-call', toolCallId: 'call-1', toolName: 'bash', input: 'sleep 60' })
 
     await user.click(await screen.findByRole('button', { name: 'Stop' }))
@@ -216,16 +251,15 @@ describe('App', () => {
     await screen.findByText('Stopped.')
     expect(toolStatus('bash')).toBe('aborted')
 
-    inFlight.resolve()
+    finished()
     await screen.findByRole('button', { name: 'Run' })
   })
 
   it('reports a failure to stop the agent', async () => {
-    promptSession.mockReturnValue(deferred<void>().promise)
     abortSession.mockRejectedValue(new Error('no such session'))
     const user = await openWorkspace()
 
-    await run(user, 'take a while')
+    await start(user, 'take a while')
     await user.click(await screen.findByRole('button', { name: 'Stop' }))
 
     expect((await screen.findByRole('alert')).textContent).toBe('Unable to stop the agent.')
@@ -234,24 +268,26 @@ describe('App', () => {
   it('keeps the conversation across turns and clears it for a new workspace', async () => {
     selectDirectory.mockResolvedValueOnce('/tmp/one').mockResolvedValueOnce('/tmp/two')
     openSession
-      .mockResolvedValueOnce({ id: 'session-1', model: 'anthropic/claude-haiku-4.5' })
-      .mockResolvedValueOnce({ id: 'session-2', model: 'anthropic/claude-haiku-4.5' })
+      .mockResolvedValueOnce(snapshot({ id: 'session-1', cwd: '/tmp/one' }))
+      .mockResolvedValueOnce(snapshot({ id: 'session-2', cwd: '/tmp/two' }))
     const user = userEvent.setup()
     render(<App />)
 
     await user.click(screen.getByRole('button', { name: 'New' }))
     await screen.findByText('/tmp/one')
-    await run(user, 'list the files')
+    await start(user, 'list the files')
     emit({ type: 'text', text: 'Two files.' })
     await screen.findByText('Two files.')
+    finished()
 
-    await run(user, 'read the first')
+    await start(user, 'read the first')
     expect(screen.getByText('list the files')).toBeTruthy()
     expect(screen.getByText('Two files.')).toBeTruthy()
     expect(screen.getByText('read the first')).toBeTruthy()
 
-    emitFrom('session-1', { type: 'text', text: 'It holds the readme.' })
+    emit({ type: 'text', text: 'It holds the readme.' })
     await screen.findByText('It holds the readme.')
+    finished()
 
     await user.click(screen.getByRole('button', { name: 'New' }))
     await screen.findByText('/tmp/two')
@@ -259,31 +295,39 @@ describe('App', () => {
     expect(screen.queryByText('list the files')).toBeNull()
   })
 
-  it('ignores events from a session that is no longer on screen', async () => {
+  it('ignores anything from a session that is no longer on screen', async () => {
     const user = await openWorkspace()
 
-    await run(user, 'list the files')
+    await start(user, 'list the files')
+    finished()
+    await screen.findByRole('button', { name: 'Run' })
+
     emitFrom('session-9', { type: 'text', text: 'From somewhere else' })
     emitFrom('session-9', { type: 'error', message: 'Stale failure' })
+    notify({ type: 'status', sessionId: 'session-9', status: 'running' })
 
     expect(screen.queryByText('From somewhere else')).toBeNull()
     expect(screen.queryByRole('alert')).toBeNull()
+    expect(screen.getByRole('button', { name: 'Run' })).toBeTruthy()
   })
 
-  it('marks a failed tool call and reports stream errors', async () => {
+  it('marks a failed tool call and reports run errors', async () => {
     const user = await openWorkspace()
 
-    await run(user, 'read a file')
+    await start(user, 'read a file')
 
     emit(
       { type: 'tool-call', toolCallId: 'call-1', toolName: 'read', input: { path: 'gone.txt' } },
       { type: 'tool-error', toolCallId: 'call-1', message: 'File not found' },
-      { type: 'error', message: 'Rate limited' }
+      { type: 'error', message: 'No AI Gateway key. Set AI_GATEWAY_API_KEY in apps/desktop/.env.' }
     )
 
     expect(toolStatus('read')).toBe('error')
     expect(screen.getByText('File not found')).toBeTruthy()
-    expect((await screen.findByRole('alert')).textContent).toBe('Rate limited')
+    // The provider's own message is the only actionable part; boilerplate hides it.
+    expect((await screen.findByRole('alert')).textContent).toBe(
+      'No AI Gateway key. Set AI_GATEWAY_API_KEY in apps/desktop/.env.'
+    )
   })
 
   it('does not submit an empty prompt', async () => {
@@ -297,35 +341,31 @@ describe('App', () => {
     expect(screen.queryByRole('alert')).toBeNull()
   })
 
-  it('shows and recovers from an agent failure', async () => {
+  it('shows and recovers from a run that was refused outright', async () => {
     promptSession
-      .mockRejectedValueOnce(
-        new Error('No AI Gateway key. Set AI_GATEWAY_API_KEY in apps/desktop/.env.')
-      )
+      .mockRejectedValueOnce(new Error('That session is no longer open.'))
       .mockResolvedValue(undefined)
     const user = await openWorkspace()
 
-    await run(user, 'run')
+    await run(user, 'go')
 
-    // The provider's own message is the only actionable part; boilerplate hides it.
-    expect((await screen.findByRole('alert')).textContent).toBe(
-      'No AI Gateway key. Set AI_GATEWAY_API_KEY in apps/desktop/.env.'
-    )
+    expect((await screen.findByRole('alert')).textContent).toBe('That session is no longer open.')
+    expect(screen.getByRole('button', { name: 'Run' })).toBeTruthy()
 
-    await run(user, 'again')
+    await start(user, 'again')
     await waitFor(() => expect(screen.queryByRole('alert')).toBeNull())
   })
 
-  it('falls back to a generic message when a failure carries none', async () => {
+  it('falls back to a generic message when a refusal carries none', async () => {
     promptSession.mockRejectedValueOnce(new Error('   '))
     const user = await openWorkspace()
 
-    await run(user, 'run')
+    await run(user, 'go')
 
     expect((await screen.findByRole('alert')).textContent).toBe('Unable to run the agent.')
   })
 
-  it('lists saved sessions and resumes one with its stored transcript', async () => {
+  it('lists saved sessions and attaches to one with its stored transcript', async () => {
     listSessions.mockResolvedValue([
       {
         id: 'session-7',
@@ -335,10 +375,11 @@ describe('App', () => {
         title: 'Earlier task'
       }
     ])
-    resumeSession.mockResolvedValue({
+    attachSession.mockResolvedValue({
       id: 'session-7',
       cwd: '/tmp/other-repo',
       model: 'openai/gpt-5.1-codex',
+      status: 'idle',
       events: [
         { type: 'prompt', text: 'What is here?' },
         { type: 'text', text: 'Two files.' }
@@ -349,18 +390,55 @@ describe('App', () => {
 
     await user.click(await screen.findByText('Earlier task'))
 
-    expect(resumeSession).toHaveBeenCalledWith('session-7')
+    expect(attachSession).toHaveBeenCalledWith('session-7')
     await screen.findByText('/tmp/other-repo')
     expect(screen.getByText('What is here?')).toBeTruthy()
     expect(screen.getByText('Two files.')).toBeTruthy()
     expect(screen.getByText('other-repo')).toBeTruthy()
   })
 
-  it('refreshes the session list after a run finishes', async () => {
+  it('picks up a session that is still working, mid-turn', async () => {
+    listSessions.mockResolvedValue([
+      {
+        id: 'session-7',
+        cwd: '/tmp/busy',
+        createdAt: '2026-08-01T10:00:00.000Z',
+        updatedAt: new Date().toISOString(),
+        title: 'Still going'
+      }
+    ])
+    attachSession.mockResolvedValue({
+      id: 'session-7',
+      cwd: '/tmp/busy',
+      model: 'openai/gpt-5.1-codex',
+      status: 'running',
+      events: [
+        { type: 'prompt', text: 'Refactor it' },
+        { type: 'text', text: 'Working on ' }
+      ]
+    })
+    const user = userEvent.setup()
+    render(<App />)
+
+    await user.click(await screen.findByText('Still going'))
+
+    // The turn it walked in on is still going, and the rest of it lands here.
+    await screen.findByRole('button', { name: 'Stop' })
+    expect(screen.getByText('Working on')).toBeTruthy()
+
+    emitFrom('session-7', { type: 'text', text: 'it now.' })
+    await screen.findByText('Working on it now.')
+
+    finished('session-7')
+    await screen.findByRole('button', { name: 'Run' })
+  })
+
+  it('refreshes the session list when a run finishes', async () => {
     const user = await openWorkspace()
+    await start(user, 'do something')
     listSessions.mockClear()
 
-    await run(user, 'do something')
+    finished()
 
     await waitFor(() => expect(listSessions).toHaveBeenCalled())
   })
@@ -394,7 +472,7 @@ describe('App', () => {
         title: 'Broken'
       }
     ])
-    resumeSession.mockRejectedValue(new Error('gone'))
+    attachSession.mockRejectedValue(new Error('gone'))
     deleteSession.mockRejectedValue(new Error('locked'))
     const user = userEvent.setup()
     render(<App />)
@@ -413,7 +491,7 @@ describe('App', () => {
     expect((await screen.findByRole('alert')).textContent).toBe('Unable to load saved sessions.')
   })
 
-  it('stops listening for session events when unmounted', async () => {
+  it('stops listening for session notifications when unmounted', async () => {
     render(<App />)
     expect(listeners).toHaveLength(1)
 
