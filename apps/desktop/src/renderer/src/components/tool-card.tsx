@@ -2,13 +2,13 @@ import { ChevronRightIcon } from 'lucide-react'
 import { useState } from 'react'
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible'
 import { cn } from '@/lib/utils'
-import type { ToolStatus } from '../transcript'
+
+export type ToolStatus = 'running' | 'done' | 'error'
 
 const statusColor: Record<ToolStatus, string> = {
   running: 'bg-primary animate-pulse',
   done: 'bg-success',
-  error: 'bg-destructive',
-  aborted: 'bg-faint'
+  error: 'bg-destructive'
 }
 
 export function ToolCard({

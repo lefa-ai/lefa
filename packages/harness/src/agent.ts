@@ -24,7 +24,11 @@ export function createTools(cwd: string): HarnessTools {
   }
 }
 
-export function createAgent(model: LanguageModel, cwd: string): HarnessAgent {
+export function createAgent(
+  model: LanguageModel,
+  cwd: string,
+  tools: HarnessTools = createTools(cwd)
+): HarnessAgent {
   const projectInstructionsPath = join(cwd, 'AGENTS.md')
   const projectInstructions = lstatSync(projectInstructionsPath, {
     throwIfNoEntry: false
@@ -53,6 +57,6 @@ export function createAgent(model: LanguageModel, cwd: string): HarnessAgent {
 
 Current working directory: ${cwd}${projectContext}`,
     model,
-    tools: createTools(cwd)
+    tools
   })
 }

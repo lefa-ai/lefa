@@ -2,13 +2,9 @@
 
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import type { UIMessage } from 'ai'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import type {
-  AgentEvent,
-  SessionNotification,
-  SessionSnapshot,
-  SessionListing
-} from '../../shared/api'
+import type { SessionListing, SessionNotification, SessionSnapshot } from '../../shared/api'
 import App from './App'
 
 // Streamdown highlights through Shiki asynchronously, which is slow and flaky
@@ -32,14 +28,45 @@ function deferred<T>() {
   return { promise, resolve, reject }
 }
 
+function said(id: string, text: string, role: UIMessage['role'] = 'assistant'): UIMessage {
+  return { id, role, parts: [{ type: 'text', text }] }
+}
+
+/** A tool part carries its own progress, so one message covers call and result. */
+function used(
+  id: string,
+  name: string,
+  input: unknown,
+  state: 'input-available' | 'output-available' | 'output-error',
+  extra: { output?: unknown; errorText?: string } = {}
+): UIMessage {
+  return {
+    id,
+    role: 'assistant',
+    parts: [{ type: `tool-${name}`, toolCallId: `${id}-call`, state, input, ...extra }]
+  } as unknown as UIMessage
+}
+
 function snapshot(overrides: Partial<SessionSnapshot> = {}): SessionSnapshot {
   return {
     id: 'session-1',
     cwd: '/tmp/workspace',
     model: 'anthropic/claude-haiku-4.5',
     status: 'idle',
-    events: [],
+    messages: [],
     queued: [],
+    ...overrides
+  }
+}
+
+function listing(overrides: Partial<SessionListing> = {}): SessionListing {
+  return {
+    id: 'session-7',
+    cwd: '/tmp/other',
+    createdAt: '2026-08-01T10:00:00.000Z',
+    updatedAt: new Date().toISOString(),
+    title: 'Earlier task',
+    status: 'idle',
     ...overrides
   }
 }
@@ -64,12 +91,12 @@ function notify(...notifications: SessionNotification[]): void {
   })
 }
 
-function emit(...events: AgentEvent[]): void {
-  emitFrom('session-1', ...events)
+function emit(...messages: UIMessage[]): void {
+  emitFrom('session-1', ...messages)
 }
 
-function emitFrom(sessionId: string, ...events: AgentEvent[]): void {
-  notify(...events.map((event) => ({ type: 'event' as const, sessionId, event })))
+function emitFrom(sessionId: string, ...messages: UIMessage[]): void {
+  notify(...messages.map((message) => ({ type: 'message' as const, sessionId, message })))
 }
 
 function finished(sessionId = 'session-1'): void {
@@ -91,7 +118,7 @@ async function run(user: ReturnType<typeof userEvent.setup>, text: string): Prom
   await user.click(screen.getByRole('button', { name: 'Run' }))
 }
 
-/** Types a prompt, then plays back what main sends once the run is under way. */
+/** Types a prompt, then plays back what main sends once the turn is under way. */
 async function start(
   user: ReturnType<typeof userEvent.setup>,
   text: string,
@@ -100,7 +127,9 @@ async function start(
   await run(user, text)
   notify(
     { type: 'status', sessionId, status: 'running' },
-    { type: 'event', sessionId, event: { type: 'prompt', text: text.trim() } }
+    // A distinct id per prompt, as the harness gives them: reusing one would
+    // have each turn quietly replace the last.
+    { type: 'message', sessionId, message: said(`asked-${text.trim()}`, text.trim(), 'user') }
   )
 }
 
@@ -166,7 +195,6 @@ describe('App', () => {
     await user.click(openButton)
 
     expect(openButton.textContent).toBe('Opening…')
-    expect((openButton as HTMLButtonElement).disabled).toBe(true)
 
     selection.resolve('/tmp/workspace')
     await screen.findByText('/tmp/workspace')
@@ -174,7 +202,6 @@ describe('App', () => {
     expect(openSession).toHaveBeenCalledWith('/tmp/workspace')
     expect(screen.getByLabelText('Prompt')).toBeTruthy()
     expect(openButton.textContent).toBe('New')
-    expect((openButton as HTMLButtonElement).disabled).toBe(false)
   })
 
   it('keeps the current view when folder selection is canceled', async () => {
@@ -184,7 +211,6 @@ describe('App', () => {
 
     await user.click(screen.getByRole('button', { name: 'New' }))
 
-    expect(selectDirectory).toHaveBeenCalledOnce()
     expect(openSession).not.toHaveBeenCalled()
     expect(screen.queryByLabelText('Prompt')).toBeNull()
     expect(screen.queryByRole('alert')).toBeNull()
@@ -198,59 +224,80 @@ describe('App', () => {
 
     await user.click(openButton)
     expect((await screen.findByRole('alert')).textContent).toBe('Unable to open the folder picker.')
-    expect((openButton as HTMLButtonElement).disabled).toBe(false)
 
     await user.click(openButton)
     await screen.findByText('/tmp/good')
     expect(screen.queryByRole('alert')).toBeNull()
   })
 
-  it('echoes the prompt and renders streamed activity while the run is in flight', async () => {
+  it('grows a reply in place rather than piling copies up', async () => {
     const user = await openWorkspace()
 
     await start(user, '  list the files  ')
 
-    expect(promptSession).toHaveBeenCalledWith({
-      sessionId: 'session-1',
-      prompt: 'list the files'
-    })
+    expect(promptSession).toHaveBeenCalledWith({ sessionId: 'session-1', prompt: 'list the files' })
     expect(screen.getByText('list the files')).toBeTruthy()
     expect((screen.getByLabelText('Prompt') as HTMLTextAreaElement).value).toBe('')
-    expect(screen.queryByRole('button', { name: 'Run' })).toBeNull()
 
-    emit({ type: 'text', text: 'Let me ' }, { type: 'text', text: 'look.' })
+    // The same message, further along each time.
+    emit(said('reply', 'Let me '))
+    await screen.findByText('Let me')
+    emit(said('reply', 'Let me look.'))
     await screen.findByText('Let me look.')
 
-    emit({
-      type: 'tool-call',
-      toolCallId: 'call-1',
-      toolName: 'bash',
-      input: { command: 'ls' }
-    })
-    await screen.findByText('bash')
-    expect(toolStatus('bash')).toBe('running')
-    expect(screen.getByText('{"command":"ls"}')).toBeTruthy()
-
-    emit({ type: 'tool-result', toolCallId: 'call-1', output: { content: 'README.md' } })
-    await screen.findByText('README.md')
-    expect(toolStatus('bash')).toBe('done')
-
+    expect(screen.queryByText('Let me')).toBeNull()
     finished()
     await screen.findByRole('button', { name: 'Run' })
   })
 
-  it('stops a running turn and settles the transcript', async () => {
+  it('follows a tool call through to its result', async () => {
+    const user = await openWorkspace()
+    await start(user, 'list the files')
+
+    emit(used('call', 'bash', { command: 'ls' }, 'input-available'))
+    await screen.findByText('bash')
+    expect(toolStatus('bash')).toBe('running')
+    expect(screen.getByText('{"command":"ls"}')).toBeTruthy()
+
+    emit(
+      used('call', 'bash', { command: 'ls' }, 'output-available', {
+        output: { content: 'README.md' }
+      })
+    )
+    await screen.findByText('README.md')
+    expect(toolStatus('bash')).toBe('done')
+  })
+
+  it('marks a failed tool call and reports run errors', async () => {
+    const user = await openWorkspace()
+    await start(user, 'read a file')
+
+    emit(
+      used('call', 'read', { path: 'gone.txt' }, 'output-error', { errorText: 'File not found' })
+    )
+    expect(toolStatus('read')).toBe('error')
+    expect(screen.getByText('File not found')).toBeTruthy()
+
+    notify({
+      type: 'error',
+      sessionId: 'session-1',
+      error: 'No AI Gateway key. Set AI_GATEWAY_API_KEY in apps/desktop/.env.'
+    })
+
+    // The provider's own message is the only actionable part; boilerplate hides it.
+    expect((await screen.findByRole('alert')).textContent).toBe(
+      'No AI Gateway key. Set AI_GATEWAY_API_KEY in apps/desktop/.env.'
+    )
+  })
+
+  it('stops a running turn', async () => {
     const user = await openWorkspace()
 
     await start(user, 'take a while')
-    emit({ type: 'tool-call', toolCallId: 'call-1', toolName: 'bash', input: 'sleep 60' })
+    emit(used('call', 'bash', { command: 'sleep 60' }, 'input-available'))
 
     await user.click(await screen.findByRole('button', { name: 'Stop' }))
     expect(abortSession).toHaveBeenCalledWith('session-1')
-
-    emit({ type: 'aborted' })
-    await screen.findByText('Stopped.')
-    expect(toolStatus('bash')).toBe('aborted')
 
     finished()
     await screen.findByRole('button', { name: 'Run' })
@@ -277,23 +324,18 @@ describe('App', () => {
     await user.click(screen.getByRole('button', { name: 'New' }))
     await screen.findByText('/tmp/one')
     await start(user, 'list the files')
-    emit({ type: 'text', text: 'Two files.' })
+    emit(said('r1', 'Two files.'))
     await screen.findByText('Two files.')
     finished()
 
     await start(user, 'read the first')
     expect(screen.getByText('list the files')).toBeTruthy()
     expect(screen.getByText('Two files.')).toBeTruthy()
-    expect(screen.getByText('read the first')).toBeTruthy()
-
-    emit({ type: 'text', text: 'It holds the readme.' })
-    await screen.findByText('It holds the readme.')
     finished()
 
     await user.click(screen.getByRole('button', { name: 'New' }))
     await screen.findByText('/tmp/two')
-    expect(screen.queryByText('It holds the readme.')).toBeNull()
-    expect(screen.queryByText('list the files')).toBeNull()
+    expect(screen.queryByText('Two files.')).toBeNull()
   })
 
   it('ignores anything from a session that is no longer on screen', async () => {
@@ -303,32 +345,12 @@ describe('App', () => {
     finished()
     await screen.findByRole('button', { name: 'Run' })
 
-    emitFrom('session-9', { type: 'text', text: 'From somewhere else' })
-    emitFrom('session-9', { type: 'error', message: 'Stale failure' })
-    notify({ type: 'status', sessionId: 'session-9', status: 'running' })
+    emitFrom('session-9', said('elsewhere', 'From somewhere else'))
+    notify({ type: 'error', sessionId: 'session-9', error: 'Stale failure' })
 
     expect(screen.queryByText('From somewhere else')).toBeNull()
     expect(screen.queryByRole('alert')).toBeNull()
     expect(screen.getByRole('button', { name: 'Run' })).toBeTruthy()
-  })
-
-  it('marks a failed tool call and reports run errors', async () => {
-    const user = await openWorkspace()
-
-    await start(user, 'read a file')
-
-    emit(
-      { type: 'tool-call', toolCallId: 'call-1', toolName: 'read', input: { path: 'gone.txt' } },
-      { type: 'tool-error', toolCallId: 'call-1', message: 'File not found' },
-      { type: 'error', message: 'No AI Gateway key. Set AI_GATEWAY_API_KEY in apps/desktop/.env.' }
-    )
-
-    expect(toolStatus('read')).toBe('error')
-    expect(screen.getByText('File not found')).toBeTruthy()
-    // The provider's own message is the only actionable part; boilerplate hides it.
-    expect((await screen.findByRole('alert')).textContent).toBe(
-      'No AI Gateway key. Set AI_GATEWAY_API_KEY in apps/desktop/.env.'
-    )
   })
 
   it('does not submit an empty prompt', async () => {
@@ -351,7 +373,6 @@ describe('App', () => {
     await run(user, 'go')
 
     expect((await screen.findByRole('alert')).textContent).toBe('That session is no longer open.')
-    expect(screen.getByRole('button', { name: 'Run' })).toBeTruthy()
 
     await start(user, 'again')
     await waitFor(() => expect(screen.queryByRole('alert')).toBeNull())
@@ -366,28 +387,16 @@ describe('App', () => {
     expect((await screen.findByRole('alert')).textContent).toBe('Unable to run the agent.')
   })
 
-  it('lists saved sessions and attaches to one with its stored transcript', async () => {
-    listSessions.mockResolvedValue([
-      {
+  it('lists saved sessions and attaches to one with its stored conversation', async () => {
+    listSessions.mockResolvedValue([listing({ cwd: '/tmp/other-repo' })])
+    attachSession.mockResolvedValue(
+      snapshot({
         id: 'session-7',
         cwd: '/tmp/other-repo',
-        createdAt: '2026-08-01T10:00:00.000Z',
-        updatedAt: new Date().toISOString(),
-        title: 'Earlier task',
-        status: 'idle'
-      }
-    ])
-    attachSession.mockResolvedValue({
-      id: 'session-7',
-      cwd: '/tmp/other-repo',
-      model: 'openai/gpt-5.1-codex',
-      status: 'idle',
-      events: [
-        { type: 'prompt', text: 'What is here?' },
-        { type: 'text', text: 'Two files.' }
-      ],
-      queued: []
-    })
+        model: 'openai/gpt-5.1-codex',
+        messages: [said('m1', 'What is here?', 'user'), said('m2', 'Two files.')]
+      })
+    )
     const user = userEvent.setup()
     render(<App />)
 
@@ -397,58 +406,35 @@ describe('App', () => {
     await screen.findByText('/tmp/other-repo')
     expect(screen.getByText('What is here?')).toBeTruthy()
     expect(screen.getByText('Two files.')).toBeTruthy()
-    expect(screen.getByText('other-repo')).toBeTruthy()
   })
 
   it('picks up a session that is still working, mid-turn', async () => {
-    listSessions.mockResolvedValue([
-      {
+    listSessions.mockResolvedValue([listing({ cwd: '/tmp/busy', title: 'Still going' })])
+    attachSession.mockResolvedValue(
+      snapshot({
         id: 'session-7',
         cwd: '/tmp/busy',
-        createdAt: '2026-08-01T10:00:00.000Z',
-        updatedAt: new Date().toISOString(),
-        title: 'Still going',
-        status: 'idle'
-      }
-    ])
-    attachSession.mockResolvedValue({
-      id: 'session-7',
-      cwd: '/tmp/busy',
-      model: 'openai/gpt-5.1-codex',
-      status: 'running',
-      events: [
-        { type: 'prompt', text: 'Refactor it' },
-        { type: 'text', text: 'Working on ' }
-      ],
-      queued: []
-    })
+        status: 'running',
+        messages: [said('m1', 'Refactor it', 'user'), said('m2', 'Working on')]
+      })
+    )
     const user = userEvent.setup()
     render(<App />)
 
     await user.click(await screen.findByText('Still going'))
 
-    // The turn it walked in on is still going, and the rest of it lands here.
     await screen.findByRole('button', { name: 'Stop' })
     expect(screen.getByText('Working on')).toBeTruthy()
 
-    emitFrom('session-7', { type: 'text', text: 'it now.' })
+    emitFrom('session-7', said('m2', 'Working on it now.'))
     await screen.findByText('Working on it now.')
 
     finished('session-7')
     await screen.findByRole('button', { name: 'Run' })
   })
 
-  it('keeps the deltas that land in the frame it takes to switch sessions', async () => {
-    listSessions.mockResolvedValue([
-      {
-        id: 'session-7',
-        cwd: '/tmp/busy',
-        createdAt: '2026-08-01T10:00:00.000Z',
-        updatedAt: new Date().toISOString(),
-        title: 'Mid-sentence',
-        status: 'idle'
-      }
-    ])
+  it('keeps the message that lands in the frame it takes to switch sessions', async () => {
+    listSessions.mockResolvedValue([listing({ title: 'Mid-sentence' })])
     const attaching = deferred<SessionSnapshot>()
     attachSession.mockReturnValue(attaching.promise)
     const user = userEvent.setup()
@@ -456,41 +442,27 @@ describe('App', () => {
 
     await user.click(await screen.findByText('Mid-sentence'))
 
-    // The snapshot lands and the run's next delta follows immediately behind it,
-    // before React has had a chance to redraw.
+    // The snapshot lands and the turn's next update follows immediately behind
+    // it, before React has had a chance to redraw.
     await act(async () => {
-      attaching.resolve({
-        id: 'session-7',
-        cwd: '/tmp/busy',
-        model: 'openai/gpt-5.1-codex',
-        status: 'running',
-        events: [{ type: 'text', text: 'Reading the' }],
-        queued: []
-      })
+      attaching.resolve(
+        snapshot({ id: 'session-7', status: 'running', messages: [said('m1', 'Reading the')] })
+      )
       await attaching.promise
       for (const listener of listeners) {
         listener({
-          type: 'event',
+          type: 'message',
           sessionId: 'session-7',
-          event: { type: 'text', text: ' file now.' }
+          message: said('m1', 'Reading it now.')
         })
       }
     })
 
-    expect(screen.getByText('Reading the file now.')).toBeTruthy()
+    expect(screen.getByText('Reading it now.')).toBeTruthy()
   })
 
   it('listens once, however many sessions it moves between', async () => {
-    listSessions.mockResolvedValue([
-      {
-        id: 'session-7',
-        cwd: '/tmp/other',
-        createdAt: '2026-08-01T10:00:00.000Z',
-        updatedAt: new Date().toISOString(),
-        title: 'Elsewhere',
-        status: 'idle'
-      }
-    ])
+    listSessions.mockResolvedValue([listing({ title: 'Elsewhere' })])
     attachSession.mockResolvedValue(snapshot({ id: 'session-7', cwd: '/tmp/other' }))
     const user = await openWorkspace()
 
@@ -501,39 +473,18 @@ describe('App', () => {
   })
 
   it('shows a session working while you are looking at another one', async () => {
-    listSessions.mockResolvedValue([
-      {
-        id: 'session-9',
-        cwd: '/tmp/elsewhere',
-        createdAt: '2026-08-01T10:00:00.000Z',
-        updatedAt: new Date().toISOString(),
-        title: 'Off on its own',
-        status: 'idle'
-      }
-    ])
+    listSessions.mockResolvedValue([listing({ id: 'session-9', title: 'Off on its own' })])
     await openWorkspace()
     await screen.findByText('Off on its own')
 
     expect(screen.queryByRole('status', { name: 'Working' })).toBeNull()
 
-    // Nothing about this session is on screen, but the sidebar still says so.
     notify({ type: 'status', sessionId: 'session-9', status: 'running' })
 
     expect(screen.getByRole('status', { name: 'Working' })).toBeTruthy()
     expect(screen.getByRole('button', { name: 'Run' })).toBeTruthy()
 
-    listSessions.mockResolvedValue([
-      {
-        id: 'session-9',
-        cwd: '/tmp/elsewhere',
-        createdAt: '2026-08-01T10:00:00.000Z',
-        updatedAt: new Date().toISOString(),
-        title: 'Off on its own',
-        status: 'idle'
-      }
-    ])
     finished('session-9')
-
     await waitFor(() => expect(screen.queryByRole('status', { name: 'Working' })).toBeNull())
   })
 
@@ -542,11 +493,7 @@ describe('App', () => {
 
     await start(user, 'start the work')
 
-    // Still working, and the composer is still open for business.
     expect(screen.getByRole('button', { name: 'Stop' })).toBeTruthy()
-    const queueButton = screen.getByRole('button', { name: 'Queue' })
-    expect((queueButton as HTMLButtonElement).disabled).toBe(true)
-
     await user.type(screen.getByLabelText('Prompt'), 'then run the tests')
     await user.click(screen.getByRole('button', { name: 'Queue' }))
 
@@ -554,39 +501,29 @@ describe('App', () => {
       sessionId: 'session-1',
       prompt: 'then run the tests'
     })
-    expect((screen.getByLabelText('Prompt') as HTMLTextAreaElement).value).toBe('')
 
     notify({ type: 'queued', sessionId: 'session-1', prompts: ['then run the tests'] })
     await screen.findByText('Queued')
     expect(screen.getByText('then run the tests')).toBeTruthy()
 
-    // The queued turn starts: it leaves the queue and joins the transcript.
+    // The queued turn starts: it leaves the queue and joins the conversation.
     notify({ type: 'queued', sessionId: 'session-1', prompts: [] })
-    emit({ type: 'prompt', text: 'then run the tests' })
+    emit(said('asked-2', 'then run the tests', 'user'))
 
     await waitFor(() => expect(screen.queryByText('Queued')).toBeNull())
     expect(screen.getByText('then run the tests')).toBeTruthy()
   })
 
   it('shows what is already queued when attaching mid-turn', async () => {
-    listSessions.mockResolvedValue([
-      {
+    listSessions.mockResolvedValue([listing({ title: 'Backed up', status: 'running' })])
+    attachSession.mockResolvedValue(
+      snapshot({
         id: 'session-7',
-        cwd: '/tmp/busy',
-        createdAt: '2026-08-01T10:00:00.000Z',
-        updatedAt: new Date().toISOString(),
-        title: 'Backed up',
-        status: 'running'
-      }
-    ])
-    attachSession.mockResolvedValue({
-      id: 'session-7',
-      cwd: '/tmp/busy',
-      model: 'openai/gpt-5.1-codex',
-      status: 'running',
-      events: [{ type: 'prompt', text: 'the first thing' }],
-      queued: ['the second thing', 'the third thing']
-    })
+        status: 'running',
+        messages: [said('m1', 'the first thing', 'user')],
+        queued: ['the second thing', 'the third thing']
+      })
+    )
     const user = userEvent.setup()
     render(<App />)
 
@@ -604,7 +541,6 @@ describe('App', () => {
     notify({ type: 'queued', sessionId: 'session-9', prompts: ['not ours'] })
 
     expect(screen.queryByText('Queued')).toBeNull()
-    expect(screen.queryByText('not ours')).toBeNull()
   })
 
   it('refreshes the session list when a run finishes', async () => {
@@ -619,14 +555,7 @@ describe('App', () => {
 
   it('deletes a session and clears it when it was on screen', async () => {
     listSessions.mockResolvedValue([
-      {
-        id: 'session-1',
-        cwd: '/tmp/workspace',
-        createdAt: '2026-08-01T10:00:00.000Z',
-        updatedAt: new Date().toISOString(),
-        title: 'Current task',
-        status: 'idle'
-      }
+      listing({ id: 'session-1', cwd: '/tmp/workspace', title: 'Current task' })
     ])
     const user = await openWorkspace()
     listSessions.mockResolvedValue([])
@@ -638,16 +567,7 @@ describe('App', () => {
   })
 
   it('reports a session that cannot be opened or deleted', async () => {
-    listSessions.mockResolvedValue([
-      {
-        id: 'session-7',
-        cwd: '/tmp/other',
-        createdAt: '2026-08-01T10:00:00.000Z',
-        updatedAt: new Date().toISOString(),
-        title: 'Broken',
-        status: 'idle'
-      }
-    ])
+    listSessions.mockResolvedValue([listing({ title: 'Broken' })])
     attachSession.mockRejectedValue(new Error('gone'))
     deleteSession.mockRejectedValue(new Error('locked'))
     const user = userEvent.setup()

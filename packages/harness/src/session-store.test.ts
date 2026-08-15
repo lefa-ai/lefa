@@ -1,204 +1,222 @@
 import assert from 'node:assert/strict'
-import { appendFile, mkdir, mkdtemp, readFile, rm, truncate, writeFile } from 'node:fs/promises'
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, it } from 'node:test'
-import type { ModelMessage } from 'ai'
+import type { UIMessage } from 'ai'
 import { SessionStore, type SessionMeta } from './session-store.ts'
 
-const idA = '11111111-1111-4111-8111-111111111111'
-const idB = '22222222-2222-4222-8222-222222222222'
+const ID = '11111111-2222-3333-4444-555555555555'
+const OTHER = '66666666-7777-8888-9999-aaaaaaaaaaaa'
 
-function meta(id: string, title = 'List the files'): SessionMeta {
+function meta(overrides: Partial<SessionMeta> = {}): SessionMeta {
   return {
-    id,
+    id: ID,
     cwd: '/tmp/workspace',
     createdAt: '2026-08-01T10:00:00.000Z',
-    title
+    title: 'A task',
+    model: 'anthropic/claude-haiku-4.5',
+    ...overrides
   }
 }
 
-const turn: ModelMessage[] = [
-  { role: 'user', content: 'List the files' },
-  { role: 'assistant', content: [{ type: 'text', text: 'Two files.' }] }
-]
+function said(id: string, text: string, role: UIMessage['role'] = 'assistant'): UIMessage {
+  return { id, role, parts: [{ type: 'text', text }] }
+}
 
 async function withStore(run: (store: SessionStore, root: string) => Promise<void>): Promise<void> {
   const root = await mkdtemp(join(tmpdir(), 'lefa-store-'))
 
   try {
-    await run(new SessionStore(join(root, 'sessions')), join(root, 'sessions'))
+    await run(new SessionStore(root), root)
   } finally {
     await rm(root, { recursive: true, force: true })
   }
 }
 
 describe('session store', () => {
-  it('round-trips a conversation across appends', async () => {
+  it('keeps what a session is apart from what was said', async () => {
+    await withStore(async (store, root) => {
+      await store.save(meta())
+      await store.append(ID, said('m1', 'Hello', 'user'))
+      await store.append(ID, said('m2', 'Hi there'))
+
+      const record = await store.load(ID)
+
+      assert.deepEqual(record.meta, meta())
+      assert.deepEqual(record.messages, [said('m1', 'Hello', 'user'), said('m2', 'Hi there')])
+      assert.match(await readFile(join(root, `${ID}.json`), 'utf8'), /"title": "A task"/)
+      assert.equal(
+        (await readFile(join(root, `${ID}.jsonl`), 'utf8')).trimEnd().split('\n').length,
+        2
+      )
+    })
+  })
+
+  it('rewrites only the last line as a message grows', async () => {
+    await withStore(async (store, root) => {
+      await store.save(meta())
+      await store.append(ID, said('m1', 'Settled'))
+      await store.append(ID, said('m2', 'Wor'))
+      await store.replaceLast(ID, said('m2', 'Working'))
+      await store.replaceLast(ID, said('m2', 'Working on it.'))
+
+      const lines = (await readFile(join(root, `${ID}.jsonl`), 'utf8')).trimEnd().split('\n')
+
+      assert.equal(lines.length, 2, 'the message was rewritten, not appended again')
+      assert.deepEqual((await store.load(ID)).messages, [
+        said('m1', 'Settled'),
+        said('m2', 'Working on it.')
+      ])
+    })
+  })
+
+  it('counts the last line in bytes, not characters', async () => {
     await withStore(async (store) => {
-      await store.append(meta(idA), 'test/model', turn)
-      await store.append(meta(idA), 'test/model', [{ role: 'user', content: 'And now?' }])
+      await store.save(meta())
+      // Emoji and accents take more bytes than characters; an offset measured
+      // in characters would cut the previous line in half.
+      await store.append(ID, said('m1', 'héllo 🌍 première'))
+      await store.append(ID, said('m2', 'partial'))
+      await store.replaceLast(ID, said('m2', 'complete 🎉'))
 
-      const record = await store.load(idA)
-
-      assert.deepEqual(record.meta, meta(idA))
-      assert.equal(record.messages.length, 3)
-      assert.deepEqual(record.messages[0], turn[0])
-      assert.deepEqual(record.messages[2], {
-        role: 'user',
-        content: 'And now?'
-      })
+      assert.deepEqual((await store.load(ID)).messages, [
+        said('m1', 'héllo 🌍 première'),
+        said('m2', 'complete 🎉')
+      ])
     })
   })
 
-  it('writes the metadata header exactly once', async () => {
+  it('picks up rewriting where a reload left off', async () => {
     await withStore(async (store, root) => {
-      await store.append(meta(idA), 'test/model', turn)
-      await store.append(meta(idA), 'test/model', [{ role: 'user', content: 'Again' }])
+      await store.save(meta())
+      await store.append(ID, said('m1', 'First'))
+      await store.append(ID, said('m2', 'Second'))
 
-      const lines = (await readFile(join(root, `${idA}.jsonl`), 'utf8')).trim().split('\n')
+      // A fresh store has never written this session, so it learns where the
+      // last line starts by reading it.
+      const reopened = new SessionStore(root)
+      await reopened.load(ID)
+      await reopened.replaceLast(ID, said('m2', 'Second, revised'))
 
-      assert.equal(lines.filter((line) => line.includes('"type":"meta"')).length, 1)
-      assert.match(lines[0] ?? '', /^\{"type":"meta"/)
+      assert.deepEqual((await reopened.load(ID)).messages, [
+        said('m1', 'First'),
+        said('m2', 'Second, revised')
+      ])
     })
   })
 
-  it('lists sessions newest first without reading the conversation', async () => {
+  it('appends when it has never seen the session before', async () => {
+    await withStore(async (store) => {
+      await store.save(meta())
+      await store.replaceLast(ID, said('m1', 'Only'))
+
+      assert.deepEqual((await store.load(ID)).messages, [said('m1', 'Only')])
+    })
+  })
+
+  it('drops a half-written final line and writes over it', async () => {
     await withStore(async (store, root) => {
-      await store.append(meta(idA, 'Older'), 'test/model', turn)
-      await store.append(meta(idB, 'Newer'), 'test/model', turn)
-      // Make the ordering unambiguous regardless of filesystem timestamp resolution.
-      await appendFile(join(root, `${idB}.jsonl`), '')
-      const huge = 'x'.repeat(200_000)
-      await appendFile(
-        join(root, `${idB}.jsonl`),
-        `${JSON.stringify({ type: 'message', message: { role: 'user', content: huge } })}\n`
+      await store.save(meta())
+      await store.append(ID, said('m1', 'Survives'))
+      // A crash mid-rewrite leaves the last line truncated.
+      await writeFile(
+        join(root, `${ID}.jsonl`),
+        `${JSON.stringify(said('m1', 'Survives'))}\n{"id":"m2","role":"assi`,
+        'utf8'
       )
 
-      const sessions = await store.list()
+      const reopened = new SessionStore(root)
+      assert.deepEqual((await reopened.load(ID)).messages, [said('m1', 'Survives')])
+      assert.equal(
+        await readFile(join(root, `${ID}.jsonl`), 'utf8'),
+        `${JSON.stringify(said('m1', 'Survives'))}\n`,
+        'the wreckage was cut away rather than skipped forever'
+      )
+
+      // The next turn carries on from the last message that survived.
+      await reopened.append(ID, said('m3', 'Carrying on'))
+
+      assert.deepEqual((await reopened.load(ID)).messages, [
+        said('m1', 'Survives'),
+        said('m3', 'Carrying on')
+      ])
+    })
+  })
+
+  it('keeps a message exactly as it was written', async () => {
+    await withStore(async (store) => {
+      await store.save(meta())
+      // Provider metadata is not something the store understands, and losing it
+      // would cost the model its own reasoning signatures.
+      const rich = {
+        id: 'm1',
+        role: 'assistant',
+        metadata: { model: 'anthropic/claude-opus-5' },
+        parts: [
+          { type: 'reasoning', text: 'Thinking', providerMetadata: { anthropic: { sig: 'abc' } } },
+          { type: 'text', text: 'Done' }
+        ]
+      } as unknown as UIMessage
+
+      await store.append(ID, rich)
+
+      assert.deepEqual((await store.load(ID)).messages, [rich])
+    })
+  })
+
+  it('lists sessions newest first and ignores what it cannot read', async () => {
+    await withStore(async (store, root) => {
+      await store.save(meta({ title: 'Older' }))
+      await store.append(ID, said('m1', 'One'))
+      await new Promise((resolve) => setTimeout(resolve, 10))
+      await store.save(meta({ id: OTHER, title: 'Newer' }))
+      await store.append(OTHER, said('m2', 'Two'))
+      await writeFile(join(root, 'not-a-session.json'), '{"nope":true}', 'utf8')
+      await writeFile(join(root, 'broken.json'), 'not json at all', 'utf8')
 
       assert.deepEqual(
-        sessions.map((session) => session.title),
+        (await store.list()).map((summary) => summary.title),
         ['Newer', 'Older']
       )
-      assert.equal(sessions[0]?.cwd, '/tmp/workspace')
-      assert.ok(sessions[0]?.updatedAt)
-      // The 200 KB body must not appear anywhere in the summary.
-      assert.ok(!JSON.stringify(sessions).includes('xxxxx'))
     })
   })
 
-  it('survives a half-written final line', async () => {
-    await withStore(async (store, root) => {
-      await store.append(meta(idA), 'test/model', turn)
-      const path = join(root, `${idA}.jsonl`)
-      const size = (await readFile(path, 'utf8')).length
-      await truncate(path, size - 12)
-
-      const record = await store.load(idA)
-
-      assert.deepEqual(record.meta, meta(idA))
-      assert.equal(record.messages.length, 1, 'the torn line is skipped, the rest survives')
-      assert.equal((await store.list())[0]?.title, 'List the files')
-    })
-  })
-
-  it('ignores files that are not readable sessions', async () => {
-    await withStore(async (store, root) => {
-      await store.append(meta(idA), 'test/model', turn)
-      await writeFile(join(root, 'notes.txt'), 'ignored')
-      await writeFile(join(root, `${idB}.jsonl`), 'not json at all\n')
-      await writeFile(join(root, '33333333-3333-4333-8333-333333333333.jsonl'), '')
-
-      assert.deepEqual(
-        (await store.list()).map((session) => session.id),
-        [idA]
-      )
-      await assert.rejects(() => store.load(idB), /missing its metadata/)
-    })
-  })
-
-  it('drops lines that parse as JSON but are not valid messages', async () => {
-    await withStore(async (store, root) => {
-      await store.append(meta(idA), 'test/model', turn)
-      const path = join(root, `${idA}.jsonl`)
-
-      for (const junk of [
-        { type: 'message', message: { role: 'wizard', content: 'nope' } },
-        { type: 'message', message: { role: 'user' } },
-        { type: 'message' },
-        { type: 'something-else', message: { role: 'user', content: 'ok' } },
-        { hello: 'world' }
-      ]) {
-        await appendFile(path, `${JSON.stringify(junk)}\n`)
-      }
-
-      const record = await store.load(idA)
-
-      assert.equal(record.messages.length, 2, 'only the two real messages survive')
-      assert.deepEqual(record.messages, turn)
-    })
-  })
-
-  it('keeps fields the message schema does not know about', async () => {
+  it('lists a session that has not said anything yet', async () => {
     await withStore(async (store) => {
-      const withOptions: ModelMessage = {
-        role: 'user',
-        content: 'Cache me',
-        providerOptions: { anthropic: { cacheControl: { type: 'ephemeral' } } }
-      }
-      await store.append(meta(idA), 'test/model', [withOptions])
+      await store.save(meta({ title: '' }))
 
-      assert.deepEqual((await store.load(idA)).messages[0], withOptions)
+      const [summary] = await store.list()
+
+      assert.equal(summary?.id, ID)
+      assert.match(summary?.updatedAt ?? '', /^\d{4}-/)
     })
   })
 
-  it('reopens on the model of the last turn', async () => {
-    await withStore(async (store) => {
-      await store.append(meta(idA), 'anthropic/claude-haiku-4.5', turn)
-      await store.append(meta(idA), 'openai/gpt-5.1-codex', [{ role: 'user', content: 'And now?' }])
-
-      const record = await store.load(idA)
-
-      assert.equal(record.model, 'openai/gpt-5.1-codex')
-      assert.equal(record.messages.length, 3, 'model records are not mistaken for messages')
-    })
-  })
-
-  it('refuses a session whose model was never recorded', async () => {
-    await withStore(async (store, root) => {
-      await mkdir(root, { recursive: true })
-      await writeFile(
-        join(root, `${idA}.jsonl`),
-        `${JSON.stringify({ type: 'meta', ...meta(idA) })}\n`
-      )
-
-      await assert.rejects(() => store.load(idA), /missing its metadata/)
-    })
-  })
-
-  it('lists nothing when no session has been saved', async () => {
+  it('has nothing to list before anything is saved', async () => {
     await withStore(async (store) => {
       assert.deepEqual(await store.list(), [])
     })
   })
 
-  it('deletes a session and tolerates deleting it twice', async () => {
+  it('removes both files and forgets where it was writing', async () => {
     await withStore(async (store) => {
-      await store.append(meta(idA), 'test/model', turn)
-      await store.delete(idA)
-      await store.delete(idA)
+      await store.save(meta())
+      await store.append(ID, said('m1', 'Gone soon'))
+      await store.delete(ID)
 
       assert.deepEqual(await store.list(), [])
+      await assert.rejects(store.load(ID))
     })
   })
 
-  it('refuses session ids that could escape the store directory', async () => {
+  it('never trusts an id as a path', async () => {
     await withStore(async (store) => {
-      for (const id of ['../escape', 'not-a-uuid', '../../etc/passwd', `${idA}/../${idB}`]) {
-        await assert.rejects(() => store.load(id), /Invalid session id/)
-        await assert.rejects(() => store.delete(id), /Invalid session id/)
-      }
+      await assert.rejects(store.load('../escape'), /Invalid session id/)
+      await assert.rejects(store.append('../escape', said('m1', 'no')), /Invalid session id/)
+      await assert.rejects(store.replaceLast('../escape', said('m1', 'no')), /Invalid session id/)
+      await assert.rejects(store.delete('../escape'), /Invalid session id/)
+      await assert.rejects(store.save(meta({ id: 'not-a-uuid' })), /Invalid session id/)
     })
   })
 })

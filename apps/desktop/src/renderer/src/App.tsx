@@ -2,11 +2,11 @@ import { SquareIcon } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState, type FormEvent, type KeyboardEvent } from 'react'
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
+import type { UIMessage } from 'ai'
 import type { RunStatus, SessionListing, SessionSnapshot } from '../../shared/api'
 import { Conversation } from './components/conversation'
 import { ModelPicker } from './components/model-picker'
 import { SessionList } from './components/session-list'
-import { buildTranscript, reduceTranscript, type TranscriptItem } from './transcript'
 
 function App(): React.JSX.Element {
   const [sessions, setSessions] = useState<readonly SessionListing[]>([])
@@ -14,7 +14,7 @@ function App(): React.JSX.Element {
   const [sessionId, setSessionId] = useState<string | null>(null)
   const [model, setModel] = useState<string | null>(null)
   const [prompt, setPrompt] = useState('')
-  const [items, setItems] = useState<readonly TranscriptItem[]>([])
+  const [messages, setMessages] = useState<readonly UIMessage[]>([])
   const [isSelecting, setIsSelecting] = useState(false)
   const [queued, setQueued] = useState<readonly string[]>([])
   const [status, setStatus] = useState<RunStatus>('idle')
@@ -84,12 +84,25 @@ function App(): React.JSX.Element {
           return
         }
 
-        // A transcript, though, is only drawn for the session on screen.
-        // Attaching to any other brings back everything missed in the meantime.
+        // Messages, though, are only drawn for the session on screen. Attaching
+        // to any other brings back everything missed in the meantime.
         if (notification.sessionId !== watching.current) return
 
-        if (notification.event.type === 'error') setError(notification.event.message)
-        else setItems((current) => reduceTranscript(current, notification.event))
+        if (notification.type === 'error') {
+          setError(notification.error)
+
+          return
+        }
+
+        // The same message arrives repeatedly as it grows, so it replaces the
+        // one it matches rather than piling up behind it.
+        setMessages((current) => {
+          const at = current.findIndex((message) => message.id === notification.message.id)
+
+          if (at === -1) return [...current, notification.message]
+
+          return current.map((message, index) => (index === at ? notification.message : message))
+        })
       }),
     [refreshSessions]
   )
@@ -100,7 +113,7 @@ function App(): React.JSX.Element {
     setSessionId(snapshot.id)
     setModel(snapshot.model)
     setWorkspacePath(snapshot.cwd)
-    setItems(buildTranscript(snapshot.events))
+    setMessages(snapshot.messages)
     setQueued(snapshot.queued)
     setStatus(snapshot.status)
   }
@@ -142,7 +155,7 @@ function App(): React.JSX.Element {
         setSessionId(null)
         setModel(null)
         setWorkspacePath(null)
-        setItems([])
+        setMessages([])
         setQueued([])
         setStatus('idle')
       }
@@ -230,7 +243,7 @@ function App(): React.JSX.Element {
         {sessionId ? (
           <>
             <div className="min-h-0 flex-1">
-              <Conversation items={items} queued={queued} isRunning={isRunning} />
+              <Conversation messages={messages} queued={queued} isRunning={isRunning} />
             </div>
 
             <div className="shrink-0 px-6 pb-6">

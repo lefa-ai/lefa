@@ -1,6 +1,5 @@
-import type { ModelMessage } from 'ai'
-import type { AgentEvent, SessionListing, SessionNotification, SessionSnapshot } from './events.ts'
-import { toAgentEvents } from './replay.ts'
+import type { UIMessage } from 'ai'
+import type { SessionListing, SessionNotification, SessionSnapshot } from './protocol.ts'
 import type { SessionStore } from './session-store.ts'
 import { Session } from './session.ts'
 
@@ -14,19 +13,8 @@ export interface SessionManagerOptions {
   describeError?: (error: unknown) => string
 }
 
-/** The turn in flight, kept apart from the conversation it has not joined yet. */
+/** The turn in flight. Its messages are already in the session. */
 interface Run {
-  /** Everything this turn has produced so far. */
-  buffer: AgentEvent[]
-  /**
-   * The conversation as it stood when the turn began.
-   *
-   * A snapshot reads from here rather than from the live history: the session
-   * commits the turn to its history and only then awaits the store, so during
-   * that write the turn would otherwise appear twice — once from history and
-   * once from the buffer.
-   */
-  baseline: readonly ModelMessage[]
   /** Prompts to run, in order, once this turn is done. */
   queue: string[]
 }
@@ -36,10 +24,10 @@ function defaultDescribeError(error: unknown): string {
 }
 
 /**
- * Owns every open session and the runs happening inside them.
+ * Owns every open session and the turns happening inside them.
  *
- * A run belongs to the manager, not to whoever started it: it keeps going when
- * the window looking at it moves on, and every watcher sees the same stream.
+ * A turn belongs to the manager, not to whoever started it: it keeps going when
+ * the window looking at it moves on, and every watcher sees the same messages.
  * Reattaching is a snapshot plus the notifications that follow it, which is the
  * same shape a server would expose over the wire.
  */
@@ -73,16 +61,16 @@ export class SessionManager {
 
   /**
    * Opens a session for watching, loading it from disk if it is not already in
-   * memory. A session already open may hold a turn newer than the file it came
-   * from, so it is always preferred.
+   * memory. A session already open may hold messages newer than the files it
+   * came from, so it is always preferred.
    */
   async attach(sessionId: string): Promise<SessionSnapshot> {
     const open = this.sessions.get(sessionId)
 
     if (open) return this.snapshot(open)
 
-    const { meta, model, messages } = await this.store.load(sessionId)
-    const session = new Session(model, meta.cwd, {
+    const { meta, messages } = await this.store.load(sessionId)
+    const session = new Session(meta.model, meta.cwd, {
       id: meta.id,
       createdAt: meta.createdAt,
       title: meta.title,
@@ -97,7 +85,7 @@ export class SessionManager {
   /**
    * Starts a turn and returns as soon as it is under way.
    *
-   * The run outlives this call: it reports itself through notifications, so
+   * The turn outlives this call: it reports itself through notifications, so
    * nothing has to stay and wait for it. A prompt sent into a turn already
    * running joins the queue rather than being refused — steering an agent
    * mid-task is the point, and waiting for a stopping place to type is not.
@@ -113,7 +101,7 @@ export class SessionManager {
       return
     }
 
-    const run: Run = { buffer: [], baseline: session.history, queue: [] }
+    const run: Run = { queue: [] }
     this.runs.set(sessionId, run)
     this.publish({ type: 'status', sessionId, status: 'running' })
     void this.drain(session, run, text)
@@ -141,8 +129,8 @@ export class SessionManager {
   }
 
   async delete(sessionId: string): Promise<void> {
-    // Discard rather than abort: a run still unwinding would otherwise save its
-    // last turn and bring the deleted file back.
+    // Discard rather than abort: a turn still unwinding would otherwise write
+    // its last message and bring the deleted files back.
     this.sessions.get(sessionId)?.discard()
     this.sessions.delete(sessionId)
     await this.store.delete(sessionId)
@@ -158,7 +146,11 @@ export class SessionManager {
     const summaries = await this.store.list()
 
     return summaries.map((summary) => ({
-      ...summary,
+      id: summary.id,
+      cwd: summary.cwd,
+      createdAt: summary.createdAt,
+      updatedAt: summary.updatedAt,
+      title: summary.title,
       status: this.runs.has(summary.id) ? ('running' as const) : ('idle' as const)
     }))
   }
@@ -174,17 +166,14 @@ export class SessionManager {
 
     try {
       while (text !== undefined) {
-        // Each turn starts from the conversation the last one left behind.
-        run.baseline = session.history
-        run.buffer = []
-        // The prompt is echoed by the manager rather than by the caller, so
-        // every watcher sees it and a replayed transcript matches a live one.
-        this.emit(session.id, run, { type: 'prompt', text })
-
         try {
-          for await (const event of session.prompt(text)) this.emit(session.id, run, event)
+          for await (const message of session.prompt(text)) this.send(session.id, message)
         } catch (error) {
-          this.emit(session.id, run, { type: 'error', message: this.describeError(error) })
+          this.publish({
+            type: 'error',
+            sessionId: session.id,
+            error: this.describeError(error)
+          })
         }
 
         text = run.queue.shift()
@@ -199,9 +188,8 @@ export class SessionManager {
     }
   }
 
-  private emit(sessionId: string, run: Run, event: AgentEvent): void {
-    run.buffer.push(event)
-    this.publish({ type: 'event', sessionId, event })
+  private send(sessionId: string, message: UIMessage): void {
+    this.publish({ type: 'message', sessionId, message })
   }
 
   private publish(notification: SessionNotification): void {
@@ -216,9 +204,7 @@ export class SessionManager {
       cwd: session.cwd,
       model: session.model,
       status: run ? 'running' : 'idle',
-      events: run
-        ? [...toAgentEvents(run.baseline), ...run.buffer]
-        : toAgentEvents(session.history),
+      messages: [...session.messages],
       queued: run ? [...run.queue] : []
     }
   }
