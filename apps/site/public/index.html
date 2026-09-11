@@ -5,6 +5,15 @@
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>Lefa: an open source Agent IDE</title>
 <meta name="description" content="Lefa is the open source Agent IDE we're building for people who run coding agents all day. The idea is simple: every task gets its own workspace. Any model, no lock-in." />
+<link rel="canonical" href="https://lefa.ai/" />
+<meta property="og:type" content="website" />
+<meta property="og:site_name" content="Lefa" />
+<meta property="og:title" content="Lefa: an open source Agent IDE" />
+<meta property="og:description" content="An open source desktop Agent IDE for orchestrating coding agents across persistent local and cloud workspaces." />
+<meta property="og:url" content="https://lefa.ai/" />
+<meta name="twitter:card" content="summary" />
+<meta name="twitter:title" content="Lefa: an open source Agent IDE" />
+<meta name="twitter:description" content="An open source desktop Agent IDE for orchestrating coding agents across persistent local and cloud workspaces." />
 <link rel="icon" href="/favicon.ico" sizes="32x32" />
 <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
 <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
@@ -12,6 +21,46 @@
 <link rel="preconnect" href="https://fonts.googleapis.com" />
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
 <link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700;800&family=Geist+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@graph": [
+    {
+      "@type": "Organization",
+      "@id": "https://lefa.ai/#organization",
+      "name": "Lefa",
+      "url": "https://lefa.ai/",
+      "email": "m@lefa.ai",
+      "foundingDate": "2026-05-01",
+      "founder": {
+        "@type": "Person",
+        "name": "Marcos Hernanz",
+        "url": "https://www.linkedin.com/in/marcoshernanz"
+      },
+      "address": {
+        "@type": "PostalAddress",
+        "addressLocality": "Oakland",
+        "addressRegion": "CA",
+        "addressCountry": "US"
+      },
+      "sameAs": [
+        "https://github.com/lefa-ai",
+        "https://x.com/lefa_ai",
+        "https://www.linkedin.com/company/lefa-ai/"
+      ]
+    },
+    {
+      "@type": "SoftwareApplication",
+      "name": "Lefa",
+      "url": "https://lefa.ai/",
+      "applicationCategory": "DeveloperApplication",
+      "operatingSystem": "macOS",
+      "description": "An open source desktop Agent IDE for orchestrating coding agents across persistent local and cloud workspaces.",
+      "author": { "@id": "https://lefa.ai/#organization" }
+    }
+  ]
+}
+</script>
 <style>
   /* Lefa design tokens. See DESIGN.md. */
   :root {
@@ -516,7 +565,7 @@
         <span>You're on the list: <span id="wl-echo"></span></span>
       </div>
       <div class="wl-alt" role="status">
-        <span>Signups aren't live yet. <a id="wl-mailto" href="mailto:m@lefa.ai?subject=Waitlist">Email m@lefa.ai</a> and we'll add you by hand.</span>
+        <span>We couldn't save that signup. <a id="wl-mailto" href="mailto:m@lefa.ai?subject=Waitlist">Email m@lefa.ai</a> and we'll add you by hand.</span>
       </div>
     </div>
     <div class="chips">
@@ -588,8 +637,11 @@
 <div class="cur-dot" aria-hidden="true"></div>
 
 <footer>
-  <span>© 2026 Lefa. Built in the open.</span>
+  <span>© 2026 Lefa. Founded by <a href="https://www.linkedin.com/in/marcoshernanz">Marcos Hernanz</a>.</span>
   <div class="links">
+    <a href="/about">About</a>
+    <a href="mailto:m@lefa.ai">Contact</a>
+    <a href="/privacy">Privacy</a>
     <a href="https://github.com/lefa-ai/lefa">GitHub</a>
     <a href="https://x.com/lefa_ai">X</a>
   </div>

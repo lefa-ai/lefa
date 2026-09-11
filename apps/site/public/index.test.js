@@ -67,6 +67,30 @@ describe('landing page', () => {
     for (const icon of manifest.icons) {
       await access(join(siteDirectory, icon.src.slice(1)))
     }
+
+    for (const page of ['about.html', 'privacy.html', 'robots.txt', 'sitemap.xml']) {
+      await access(join(siteDirectory, page))
+    }
+  })
+
+  it('publishes consistent company identity and crawl metadata', () => {
+    const { document } = loadPage()
+    const structuredData = JSON.parse(
+      document.querySelector('script[type="application/ld+json"]')?.textContent ?? '{}'
+    )
+    const organization = structuredData['@graph']?.find(
+      (entry) => entry['@type'] === 'Organization'
+    )
+
+    expect(document.querySelector('link[rel="canonical"]')?.href).toBe('https://lefa.ai/')
+    expect(organization).toMatchObject({
+      name: 'Lefa',
+      url: 'https://lefa.ai/',
+      email: 'm@lefa.ai',
+      foundingDate: '2026-05-01'
+    })
+    expect(organization?.founder?.name).toBe('Marcos Hernanz')
+    expect(document.querySelector('footer')?.textContent).toContain('Marcos Hernanz')
   })
 
   it('finishes the workspace illustration immediately for reduced motion', () => {
